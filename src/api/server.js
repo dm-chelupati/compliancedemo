@@ -12,7 +12,12 @@ let nextId = 3;
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'healthy',
+    version: '1.0.1',
+    timestamp: new Date().toISOString(),
+    deployedBy: process.env.COMMIT_SHA ? 'pipeline' : 'unknown',
+  });
 });
 
 // Get all todos
