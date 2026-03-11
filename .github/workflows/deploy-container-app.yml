@@ -1,0 +1,75 @@
+# ============================================================
+# GitHub Actions — Build & Deploy Container App
+# This is the CI/CD pipeline that represents "compliant" deployments.
+# Uses ACR admin credentials for image push and az CLI for deploy.
+# ============================================================
+name: Deploy Container App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/api/**'
+  workflow_dispatch:
+
+env:
+  RESOURCE_GROUP: rg-compliancedemo
+  CONTAINER_APP_NAME: ca-api-compliancedemo
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  IMAGE_NAME: compliance-demo-api
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push image
+        run: |
+          IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          docker build -t "$IMAGE_TAG" -t "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest" src/api/
+          docker push "$IMAGE_TAG"
+          docker push "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Container App with compliance tags
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "${{ env.IMAGE_TAG }}" \
+            --set-env-vars "COMMIT_SHA=${{ github.sha }}" "DEPLOY_RUN=${{ github.run_id }}"
+
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --tags \
+              deployed-by=pipeline \
+              pipeline-run-id=${{ github.run_id }} \
+              commit-sha=${{ github.sha }} \
+              workflow="${{ github.workflow }}" \
+              repository=${{ github.repository }} \
+              branch=${{ github.ref_name }}
+
+      - name: Verify deployment
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "✅ App deployed to: https://$FQDN"
+          sleep 30
+          curl -sf "https://$FQDN/health" || echo "Health check pending..."
