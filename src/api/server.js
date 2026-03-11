@@ -14,9 +14,10 @@ let nextId = 3;
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    version: '1.0.1',
+    version: '1.1.0',
     timestamp: new Date().toISOString(),
     deployedBy: process.env.COMMIT_SHA ? 'pipeline' : 'unknown',
+    commitSha: process.env.COMMIT_SHA || 'n/a',
   });
 });
 
