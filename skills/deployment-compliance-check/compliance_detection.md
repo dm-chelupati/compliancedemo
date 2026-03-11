@@ -1,5 +1,10 @@
 # Compliance Detection Decision Tree
 
+## Query execution
+
+**Use `QueryLogAnalyticsByWorkspaceId`** with workspace ID `17c5506a-8871-4793-8470-c400a2114997`.
+Do NOT use `QueryLogAnalyticsByResourceId` (known platform bug — see SKILL.md for details).
+
 ## Decision flow
 
 Activity Log event (Microsoft.App/containerApps/write, Success):

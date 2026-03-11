@@ -11,6 +11,33 @@ tools:
 
 # Deployment Compliance Check
 
+## Configuration
+
+| Setting | Value |
+|---|---|
+| Log Analytics Workspace ID (GUID) | `17c5506a-8871-4793-8470-c400a2114997` |
+| Log Analytics Workspace Resource | `law-compliance-compliancedemo` |
+| Resource Group | `rg-compliancedemo` |
+| Subscription | `cbf44432-7f45-4906-a85d-d2b14a1e8328` |
+| Container App | `ca-api-compliancedemo` |
+
+## Query Method
+
+**Always use `QueryLogAnalyticsByWorkspaceId`** with workspace ID `17c5506a-8871-4793-8470-c400a2114997`.
+
+> **WARNING**: Do NOT use `QueryLogAnalyticsByResourceId` — it fails due to a known
+> tool/platform authentication bug (the managed identity has correct RBAC permissions
+> but the tool itself does not pass them through properly). If you encounter this
+> error, fall back to `QueryLogAnalyticsByWorkspaceId` using the workspace GUID above.
+
+To discover the workspace GUID if it changes:
+```bash
+az monitor log-analytics workspace show \
+  --resource-group rg-compliancedemo \
+  --workspace-name law-compliance-compliancedemo \
+  --query customerId -o tsv
+```
+
 ## Purpose
 
 This skill checks whether Container App deployments were made through an
@@ -152,3 +179,5 @@ gh run rerun {lastSuccessfulRunId}
 - Always confirm the pipeline SP client ID with the user
 - Tags are secondary -- caller identity always takes precedence
 - Always ask user approval via the compliance approval hook before reverting
+- **Query method**: Always use `QueryLogAnalyticsByWorkspaceId` with workspace GUID `17c5506a-8871-4793-8470-c400a2114997` (see [Query Method](#query-method) section)
+- If `QueryLogAnalyticsByResourceId` fails, immediately retrieve the workspace GUID via `az monitor log-analytics workspace show` and switch to `QueryLogAnalyticsByWorkspaceId` — do not retry the failing tool
