@@ -1,7 +1,8 @@
 # ============================================================
 # GitHub Actions — Build & Deploy Container App
 # This is the CI/CD pipeline that represents "compliant" deployments.
-# Uses ACR admin credentials for image push and az CLI for deploy.
+# Uses OIDC with a user-assigned managed identity for Azure login.
+# Uses ACR admin credentials for image push.
 # ============================================================
 name: Deploy Container App
 
@@ -11,6 +12,10 @@ on:
     paths:
       - 'src/api/**'
   workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read
 
 env:
   RESOURCE_GROUP: rg-compliancedemo
@@ -40,10 +45,12 @@ jobs:
           docker push "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-      - name: Azure Login
+      - name: Azure Login (OIDC — managed identity)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Container App with compliance tags
         run: |
