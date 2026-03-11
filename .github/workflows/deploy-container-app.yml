@@ -1,8 +1,7 @@
 # ============================================================
 # GitHub Actions — Build & Deploy Container App
 # This is the CI/CD pipeline that represents "compliant" deployments.
-# Uses OIDC with a user-assigned managed identity for Azure login.
-# Uses ACR admin credentials for image push.
+# Pushes image to ACR → Container App auto-deploys via webhook.
 # ============================================================
 name: Deploy Container App
 
@@ -13,18 +12,12 @@ on:
       - 'src/api/**'
   workflow_dispatch:
 
-permissions:
-  id-token: write   # Required for OIDC
-  contents: read
-
 env:
-  RESOURCE_GROUP: rg-compliancedemo
-  CONTAINER_APP_NAME: ca-api-compliancedemo
   ACR_NAME: ${{ vars.ACR_NAME }}
   IMAGE_NAME: compliance-demo-api
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -40,43 +33,26 @@ jobs:
       - name: Build and push image
         run: |
           IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          docker build -t "$IMAGE_TAG" -t "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest" src/api/
+          LATEST_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
+
+          docker build \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "deployed-by=pipeline" \
+            --label "pipeline-run-id=${{ github.run_id }}" \
+            --label "commit-sha=${{ github.sha }}" \
+            --label "branch=${{ github.ref_name }}" \
+            -t "$IMAGE_TAG" \
+            -t "$LATEST_TAG" \
+            src/api/
+
           docker push "$IMAGE_TAG"
-          docker push "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          docker push "$LATEST_TAG"
 
-      - name: Azure Login (OIDC — managed identity)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Deploy to Container App with compliance tags
-        run: |
-          az containerapp update \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image "${{ env.IMAGE_TAG }}" \
-            --set-env-vars "COMMIT_SHA=${{ github.sha }}" "DEPLOY_RUN=${{ github.run_id }}"
-
-          az containerapp update \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --tags \
-              deployed-by=pipeline \
-              pipeline-run-id=${{ github.run_id }} \
-              commit-sha=${{ github.sha }} \
-              workflow="${{ github.workflow }}" \
-              repository=${{ github.repository }} \
-              branch=${{ github.ref_name }}
-
-      - name: Verify deployment
-        run: |
-          FQDN=$(az containerapp show \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --query "properties.configuration.ingress.fqdn" -o tsv)
-          echo "✅ App deployed to: https://$FQDN"
-          sleep 30
-          curl -sf "https://$FQDN/health" || echo "Health check pending..."
+          echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **App URL**: https://ca-api-compliancedemo.ashypond-ed21e6b9.eastus2.azurecontainerapps.io" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Container App will auto-deploy via ACR webhook." >> $GITHUB_STEP_SUMMARY
