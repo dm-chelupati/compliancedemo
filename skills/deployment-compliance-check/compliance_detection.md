@@ -28,16 +28,25 @@ Activity Log event (Microsoft.App/containerApps/write):
 - **KQL**: filter on `ActivityStatusValue == 'Success'`
 
 1. Extract `claims.appid` (az cli: direct access; KQL: `parse_json(Claims)["appid"]`)
-2. appid == c44b4083-3bb0-49c1-b47d-974e53cbdf3c -> Azure Portal -> NON-COMPLIANT
-3. appid == 04b07795-a710-4e84-bea4-c697bab44963 -> Azure CLI -> NON-COMPLIANT
-4. appid == 1950a258-227b-4e31-a9cf-717495945fc2 -> Azure PowerShell -> NON-COMPLIANT
-5. appid == 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 -> Visual Studio -> NON-COMPLIANT
-6. appid == 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 -> Azure Mobile App -> NON-COMPLIANT
-7. Caller contains @ -> User principal -> NON-COMPLIANT
-8. appid matches approved CI/CD SP -> GitHub Actions -> COMPLIANT (verify with tags)
+2. appid == b2eb3f37-8a6e-4cf7-b583-a703da1fe44d -> GitHub Actions UAMI -> **COMPLIANT** (verify with tags)
+3. appid == c44b4083-3bb0-49c1-b47d-974e53cbdf3c -> Azure Portal -> NON-COMPLIANT
+4. appid == 04b07795-a710-4e84-bea4-c697bab44963 -> Azure CLI -> NON-COMPLIANT
+5. appid == 1950a258-227b-4e31-a9cf-717495945fc2 -> Azure PowerShell -> NON-COMPLIANT
+6. appid == 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 -> Visual Studio -> NON-COMPLIANT
+7. appid == 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 -> Azure Mobile App -> NON-COMPLIANT
+8. Caller contains @ -> User principal -> NON-COMPLIANT
 9. Unknown service principal -> INVESTIGATE
 
-## Well-known Azure application IDs
+## Approved CI/CD application IDs
+
+| Application ID | Identity | Classification |
+|---|---|---|
+| b2eb3f37-8a6e-4cf7-b583-a703da1fe44d | `id-compliancedemo-deploy` (GitHub Actions UAMI) | **COMPLIANT** |
+
+This is the User-Assigned Managed Identity with OIDC federated credentials for the GitHub Actions pipeline.
+It deploys directly to the Container App — its client ID appears as `claims.appid` in the Activity Log.
+
+## Well-known Azure application IDs (non-compliant)
 
 | Application ID | Application name |
 |---|---|
@@ -59,6 +68,7 @@ az containerapp show --name {name} --resource-group {rg} --query tags -o json
 
 Expected compliant tags:
 - deployed-by: pipeline
+- deployment-method: github-actions
 - pipeline-run-id: GitHub Actions run ID
 - commit-sha: Git commit SHA
 - workflow: Workflow name

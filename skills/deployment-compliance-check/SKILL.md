@@ -77,9 +77,9 @@ the `claims.appid` inside the `Claims` column identify the source:
 
 | claims.appid | Source | Classification |
 |---|---|---|
+| b2eb3f37-8a6e-4cf7-b583-a703da1fe44d | GitHub Actions UAMI (`id-compliancedemo-deploy`) | **Compliant** |
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal | **Non-compliant** |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Azure CLI (interactive) | **Non-compliant** |
-| your-pipeline-SP-client-id | GitHub Actions service principal | **Compliant** |
 | Any other GUID (no @ in Caller) | Unknown service principal | **Investigate** |
 | Any with Caller containing @ | User principal (manual) | **Non-compliant** |
 
@@ -130,7 +130,8 @@ caller        → identifies the user/service principal
 4. `claims.appid == "872cd9fa-d31f-45e0-9eab-6e460a02d1f1"` → Visual Studio → **NON-COMPLIANT**
 5. `claims.appid == "0a7bdc5c-7b57-40be-9939-d4c5fc7cd417"` → Azure Mobile App → **NON-COMPLIANT**
 6. `caller` contains `@` → User principal (manual) → **NON-COMPLIANT**
-7. Any other `claims.appid` with no `@` in caller → Service Principal → **COMPLIANT** (verify with tags)
+7. `claims.appid == "b2eb3f37-8a6e-4cf7-b583-a703da1fe44d"` → GitHub Actions UAMI → **COMPLIANT** (verify with tags)
+8. Any other `claims.appid` with no `@` in caller → Unknown service principal → **INVESTIGATE**
 
 > **Note**: Unlike KQL where `claims` is a JSON string requiring `parse_json()`,
 > the az cli output returns `claims` as a pre-parsed object — access `claims.appid`
@@ -162,12 +163,14 @@ AzureActivity
 | extend ClaimsObj = parse_json(Claims)
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
+    AppId == "b2eb3f37-8a6e-4cf7-b583-a703da1fe44d", "GitHubActions_UAMI",
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
     AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI_Interactive",
+    AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal_Other",
-    "ServicePrincipal"
+    "UnknownServicePrincipal"
   )
-| extend IsCompliant = (CallerType == "ServicePrincipal")
+| extend IsCompliant = (CallerType == "GitHubActions_UAMI")
 | project
     TimeGenerated, Caller, CallerIpAddress, CallerType, IsCompliant,
     AppId, Resource, OperationNameValue, CorrelationId, Properties
@@ -197,12 +200,14 @@ AzureActivity
 | extend ClaimsObj = parse_json(Claims)
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
+    AppId == "b2eb3f37-8a6e-4cf7-b583-a703da1fe44d", "GitHubActions_UAMI",
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
     AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI_Interactive",
+    AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal_Other",
-    "ServicePrincipal"
+    "UnknownServicePrincipal"
   )
-| extend IsCompliant = (CallerType == "ServicePrincipal")
+| extend IsCompliant = (CallerType == "GitHubActions_UAMI")
 | summarize
     TotalDeployments = count(),
     CompliantCount = countif(IsCompliant),
@@ -246,7 +251,7 @@ gh run rerun {lastSuccessfulRunId}
 - **Claims parsing**: az cli returns `claims` as a pre-parsed object (access `claims.appid` directly); KQL requires `parse_json(Claims)` first
 - Activity Logs are available near real-time via az cli; they may take 5-15 minutes to appear in Log Analytics
 - The claims.appid values for Azure Portal and CLI are well-known constants (see compliance_detection.md)
-- Always confirm the pipeline SP client ID with the user
+- The approved GitHub Actions UAMI client ID is `b2eb3f37-8a6e-4cf7-b583-a703da1fe44d` (`id-compliancedemo-deploy`)
 - Tags are secondary — caller identity always takes precedence
 - Always ask user approval via the compliance approval hook before reverting
 - **KQL fallback**: Use `QueryLogAnalyticsByWorkspaceId` with workspace GUID `17c5506a-8871-4793-8470-c400a2114997`
