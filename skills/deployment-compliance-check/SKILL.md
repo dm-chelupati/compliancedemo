@@ -80,8 +80,15 @@ the `claims.appid` inside the `Claims` column identify the source:
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal | **Non-compliant** |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Azure CLI (interactive) | **Non-compliant** |
 | your-pipeline-SP-client-id | GitHub Actions service principal | **Compliant** |
+| (see below) | Automation Runbook MI (Event Grid deploy) | **Compliant** |
 | Any other GUID (no @ in Caller) | Unknown service principal | **Investigate** |
 | Any with Caller containing @ | User principal (manual) | **Non-compliant** |
+
+> **Known compliant deployers (Automation Runbook):**
+> - Caller (principalId): `119bed36-0070-4466-9009-0773f412c204`
+> - Source: Azure Automation `auto-compliancedemo` (system-assigned MI)
+> - Flow: GitHub Actions push to ACR -> Event Grid -> Automation Runbook -> az containerapp update
+> - To find the appId: check `claims.appid` in Activity Log after first deployment
 
 ### Signal 2: Resource tags (from Container App)
 
@@ -96,6 +103,25 @@ Compliant CI/CD pipelines stamp these tags on every deployment:
 | repository | owner/repo | Source repository |
 
 If deployed-by is missing or not pipeline, the deployment is non-compliant.
+
+### Signal 3: Docker image labels (tamper-proof, immutable)
+
+Docker image labels are baked in at build time and **cannot be modified** after push.
+Use `az acr manifest show-metadata` or inspect via `az acr repository show` to verify them.
+
+| Label | Value | Meaning |
+|---|---|---|
+| deployed-by | pipeline | Built by CI/CD |
+| commit-sha | Git SHA | Exact source commit |
+| pipeline-run-id | GitHub Actions run_id | Links to workflow run |
+| branch | Branch name | Source branch |
+| repository | owner/repo | Source repo |
+| workflow | Workflow name | Which pipeline |
+
+These labels are the **strongest compliance signal** — they prove the image was built
+by the CI/CD pipeline and cannot be tampered with after the fact.
+
+To verify: `az acr manifest show-metadata --registry acrcompliancedemoenqgb2 --name compliance-demo-api:<tag>`
 
 ## Az CLI Query Templates (Primary Method)
 
@@ -248,6 +274,8 @@ gh run rerun {lastSuccessfulRunId}
 - The claims.appid values for Azure Portal and CLI are well-known constants (see compliance_detection.md)
 - Always confirm the pipeline SP client ID with the user
 - Tags are secondary — caller identity always takes precedence
+- Docker image labels are the strongest tamper-proof signal (immutable once pushed to ACR)
+- The Automation MI (principalId: 119bed36-0070-4466-9009-0773f412c204) is the Event Grid deploy pipeline
 - Always ask user approval via the compliance approval hook before reverting
 - **KQL fallback**: Use `QueryLogAnalyticsByWorkspaceId` with workspace GUID `17c5506a-8871-4793-8470-c400a2114997`
 - Do NOT use `QueryLogAnalyticsByResourceId` — known platform bug

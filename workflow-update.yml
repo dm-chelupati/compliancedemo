@@ -1,30 +1,21 @@
 # ============================================================
-# GitHub Actions — Build, Push & Deploy
+# GitHub Actions — Build & Push to ACR
 # CI/CD pipeline for compliant deployments to Azure Container App.
 #
 # How it works:
-# 1. Builds Docker image, tags with commit SHA + :latest
-# 2. Pushes to ACR using admin credentials (ACR_USERNAME/ACR_PASSWORD)
-# 3. Authenticates to Azure via service principal (client credentials)
-# 4. Updates Container App directly with az containerapp update
+# 1. Builds Docker image with immutable compliance labels
+# 2. Pushes to ACR using admin credentials (no Azure AD auth needed)
+# 3. ACR emits Event Grid "ImagePushed" event
+# 4. Event Grid → Automation Runbook → az containerapp update
+#    (runs inside Azure with managed identity — bypasses CAP)
 #
-# Why not OIDC?
-# Conditional Access Policy (AADSTS53003) blocks federated identity
-# token issuance from GitHub-hosted runners. Client credentials
-# (grant_type=client_credentials) uses a different OAuth2 flow that
-# is not subject to user-targeted CAPs.
+# Compliance signals (tamper-proof):
+#   - Docker image labels: commit-sha, pipeline-run-id, branch, repo
+#     (immutable once pushed to ACR)
+#   - Activity Log caller: Automation MI (Azure AD enforced)
 #
 # Required secrets:
 #   ACR_USERNAME / ACR_PASSWORD  — ACR admin credentials
-#   AZURE_CLIENT_ID              — Service principal app ID
-#   AZURE_CLIENT_SECRET          — Service principal secret
-#   AZURE_TENANT_ID              — Azure AD tenant ID
-#
-# To create the service principal (one-time setup):
-#   az ad sp create-for-rbac --name "compliancedemo-cicd" \
-#     --role Contributor \
-#     --scopes /subscriptions/cbf44432-7f45-4906-a85d-d2b14a1e8328/resourceGroups/rg-compliancedemo
-#   Then add appId → AZURE_CLIENT_ID, password → AZURE_CLIENT_SECRET
 # ============================================================
 name: Deploy Container App
 
@@ -42,12 +33,9 @@ permissions:
 env:
   ACR_NAME: acrcompliancedemoenqgb2
   IMAGE_NAME: compliance-demo-api
-  RESOURCE_GROUP: rg-compliancedemo
-  CONTAINER_APP: ca-api-compliancedemo
-  AZURE_SUBSCRIPTION_ID: cbf44432-7f45-4906-a85d-d2b14a1e8328
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -61,9 +49,10 @@ jobs:
 
       - name: Build and push image
         run: |
-          IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          SHA_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
           LATEST_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
 
+          # Immutable compliance labels — baked into the image, can't be tampered
           docker build \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
@@ -71,43 +60,24 @@ jobs:
             --label "pipeline-run-id=${{ github.run_id }}" \
             --label "commit-sha=${{ github.sha }}" \
             --label "branch=${{ github.ref_name }}" \
-            -t "$IMAGE_TAG" \
+            --label "repository=${{ github.repository }}" \
+            --label "workflow=${{ github.workflow }}" \
+            -t "$SHA_TAG" \
             -t "$LATEST_TAG" \
             src/api/
 
-          docker push "$IMAGE_TAG"
+          # Push SHA-tagged image first (triggers Event Grid → deploy)
+          docker push "$SHA_TAG"
+          # Push :latest as well (fallback reference)
           docker push "$LATEST_TAG"
-          echo "✅ Pushed: $IMAGE_TAG"
-
-      - name: Azure Login (Service Principal)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Deploy to Container App
-        run: |
-          echo "Deploying ${{ github.sha }} to ${{ env.CONTAINER_APP }}..."
-
-          az containerapp update \
-            --name "${{ env.CONTAINER_APP }}" \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
-            --subscription "${{ env.AZURE_SUBSCRIPTION_ID }}" \
-            --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" \
-            --set-env-vars \
-              "COMMIT_SHA=${{ github.sha }}" \
-              "DEPLOYED_BY=pipeline" \
-            --output none
-
-          echo "✅ Deployment complete"
+          echo "✅ Pushed: $SHA_TAG"
+          echo "🔄 Event Grid will trigger deployment automatically"
 
       - name: Summary
         run: |
-          echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Image Pushed to ACR" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Container App**: ${{ env.CONTAINER_APP }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deploy**: Automatic via Event Grid → Automation Runbook" >> $GITHUB_STEP_SUMMARY
           echo "- **App URL**: https://ca-api-compliancedemo.ashypond-ed21e6b9.eastus2.azurecontainerapps.io" >> $GITHUB_STEP_SUMMARY
