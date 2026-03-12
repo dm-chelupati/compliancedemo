@@ -84,11 +84,11 @@ the `claims.appid` inside the `Claims` column identify the source:
 | Any other GUID (no @ in Caller) | Unknown service principal | **Investigate** |
 | Any with Caller containing @ | User principal (manual) | **Non-compliant** |
 
-> **Known compliant deployers (Automation Runbook):**
+> **Known compliant deployer — Automation Runbook (Event Grid pipeline):**
 > - Caller (principalId): `119bed36-0070-4466-9009-0773f412c204`
 > - Source: Azure Automation `auto-compliancedemo` (system-assigned MI)
 > - Flow: GitHub Actions push to ACR -> Event Grid -> Automation Runbook -> az containerapp update
-> - To find the appId: check `claims.appid` in Activity Log after first deployment
+> - Match on: `Caller == "119bed36-0070-4466-9009-0773f412c204"` in Activity Log
 
 ### Signal 2: Resource tags (from Container App)
 
