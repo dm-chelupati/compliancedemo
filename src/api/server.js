@@ -64,6 +64,16 @@ app.post('/api/todos/:id/restore', (req, res) => {
   res.json(restored);
 });
 
+// Stats endpoint — counts of active and deleted todos
+app.get('/api/todos/stats', (req, res) => {
+  res.json({
+    active: todos.filter(t => !t.completed).length,
+    completed: todos.filter(t => t.completed).length,
+    deleted: deletedTodos.length,
+    total: todos.length + deletedTodos.length,
+  });
+});
+
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`Todo API listening on port ${port}`);
