@@ -3,13 +3,55 @@ name: deployment-compliance-check
 description: >
   Detects out-of-compliance Azure Container App deployments by correlating
   Activity Log caller identity and resource tags with approved CI/CD pipelines.
-  Uses KQL queries via Kusto MCP against a Log Analytics Workspace.
+  Primary method: direct Activity Log query via Azure CLI (no LAW dependency).
+  Fallback method: KQL queries against a Log Analytics Workspace.
 tools:
-  - kusto_query
   - azure_cli
+  - kusto_query
 ---
 
 # Deployment Compliance Check
+
+## Configuration
+
+| Setting | Value |
+|---|---|
+| Resource Group | `rg-compliancedemo` |
+| Subscription | `cbf44432-7f45-4906-a85d-d2b14a1e8328` |
+| Container App | `ca-api-compliancedemo` |
+| Log Analytics Workspace ID (GUID) | `17c5506a-8871-4793-8470-c400a2114997` *(fallback only)* |
+| Log Analytics Workspace Resource | `law-compliance-compliancedemo` *(fallback only)* |
+
+## Query Method
+
+### Primary: Azure CLI Activity Log (Recommended)
+
+Query Azure Activity Logs directly via `az monitor activity-log list`. This approach:
+- **No LAW dependency** — works without a Log Analytics Workspace
+- **Near real-time** — no 2-15 minute ingestion delay
+- **Zero cost** — no LAW ingestion/query charges
+- **Simpler setup** — no diagnostic settings required
+
+Use `RunAzCliReadCommands` with the command templates in the [Az CLI Query Templates](#az-cli-query-templates) section.
+
+### Fallback: KQL via Log Analytics Workspace
+
+Use `QueryLogAnalyticsByWorkspaceId` with workspace ID `17c5506a-8871-4793-8470-c400a2114997`.
+Fall back to this method when:
+- You need advanced KQL aggregations (e.g., compliance summaries across time)
+- You need joins with other LAW tables
+- The az cli approach hits ARM API rate limits
+
+> **WARNING**: Do NOT use `QueryLogAnalyticsByResourceId` — it fails due to a known
+> tool/platform authentication bug. Always use `QueryLogAnalyticsByWorkspaceId`.
+
+To discover the workspace GUID if it changes:
+```bash
+az monitor log-analytics workspace show \
+  --resource-group rg-compliancedemo \
+  --workspace-name law-compliance-compliancedemo \
+  --query customerId -o tsv
+```
 
 ## Purpose
 
@@ -55,7 +97,59 @@ Compliant CI/CD pipelines stamp these tags on every deployment:
 
 If deployed-by is missing or not pipeline, the deployment is non-compliant.
 
-## KQL query templates
+## Az CLI Query Templates (Primary Method)
+
+### Template 1: Detect recent Container App deployments
+
+```bash
+az monitor activity-log list \
+  --resource-group {resourceGroup} \
+  --subscription {subscriptionId} \
+  --offset {timeRange} \
+  --query "[?operationName.value=='Microsoft.App/containerApps/write' && status.value=='Accepted']" \
+  -o json
+```
+
+> **IMPORTANT**: Use `status.value=='Accepted'` (not `Succeeded`). Container App
+> write operations are async (ARM returns HTTP 202). The `Accepted` event carries
+> the caller identity and claims needed for compliance classification.
+
+### Template 2: Classification logic for az cli results
+
+For each event in the result array, classify using these fields:
+
+```
+claims.appid  → identifies the source application
+caller        → identifies the user/service principal
+```
+
+**Classification rules** (apply in order):
+1. `claims.appid == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c"` → Azure Portal → **NON-COMPLIANT**
+2. `claims.appid == "04b07795-a710-4e84-bea4-c697bab44963"` → Azure CLI (interactive) → **NON-COMPLIANT**
+3. `claims.appid == "1950a258-227b-4e31-a9cf-717495945fc2"` → Azure PowerShell → **NON-COMPLIANT**
+4. `claims.appid == "872cd9fa-d31f-45e0-9eab-6e460a02d1f1"` → Visual Studio → **NON-COMPLIANT**
+5. `claims.appid == "0a7bdc5c-7b57-40be-9939-d4c5fc7cd417"` → Azure Mobile App → **NON-COMPLIANT**
+6. `caller` contains `@` → User principal (manual) → **NON-COMPLIANT**
+7. Any other `claims.appid` with no `@` in caller → Service Principal → **COMPLIANT** (verify with tags)
+
+> **Note**: Unlike KQL where `claims` is a JSON string requiring `parse_json()`,
+> the az cli output returns `claims` as a pre-parsed object — access `claims.appid`
+> directly without any JSON parsing.
+
+### Template 3: Quick one-liner with JMESPath classification
+
+```bash
+az monitor activity-log list \
+  --resource-group {resourceGroup} \
+  --subscription {subscriptionId} \
+  --offset {timeRange} \
+  --query "[?operationName.value=='Microsoft.App/containerApps/write' && status.value=='Accepted'].{time:eventTimestamp, caller:caller, appid:claims.appid, ip:httpRequest.clientIpAddress, resource:resourceId}" \
+  -o table
+```
+
+---
+
+## KQL Query Templates (Fallback Method)
 
 ### Template 1: Detect recent Container App deployments and classify
 
@@ -147,8 +241,13 @@ gh run rerun {lastSuccessfulRunId}
 
 ## Important notes
 
-- Activity Logs may take 5-15 minutes to appear in Log Analytics
-- The claims.appid values for Azure Portal and CLI are well-known constants
+- **Prefer az cli** (primary) over KQL (fallback) for compliance scans — faster, no LAW dependency, zero cost
+- **Status filter**: Use `Accepted` for az cli, `Success` for KQL — container app writes are async (HTTP 202)
+- **Claims parsing**: az cli returns `claims` as a pre-parsed object (access `claims.appid` directly); KQL requires `parse_json(Claims)` first
+- Activity Logs are available near real-time via az cli; they may take 5-15 minutes to appear in Log Analytics
+- The claims.appid values for Azure Portal and CLI are well-known constants (see compliance_detection.md)
 - Always confirm the pipeline SP client ID with the user
-- Tags are secondary -- caller identity always takes precedence
+- Tags are secondary — caller identity always takes precedence
 - Always ask user approval via the compliance approval hook before reverting
+- **KQL fallback**: Use `QueryLogAnalyticsByWorkspaceId` with workspace GUID `17c5506a-8871-4793-8470-c400a2114997`
+- Do NOT use `QueryLogAnalyticsByResourceId` — known platform bug
