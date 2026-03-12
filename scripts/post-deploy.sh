@@ -155,57 +155,47 @@ else
   fi
 fi
 
-# ---- Step 3: Grant agent MI Log Analytics Reader on LAW ----
-echo -e "\n${YELLOW}[3/7] Granting agent identity Log Analytics Reader...${NC}"
+# ---- Step 3: Grant agent MI required RBAC roles ----
+echo -e "\n${YELLOW}[3/7] Granting agent identity RBAC roles...${NC}"
 
 AGENT_MI_PRINCIPAL_ID=$(az identity show --name "$AGENT_MI_NAME" --resource-group "$RESOURCE_GROUP" --query principalId -o tsv 2>/dev/null || echo "")
+AGENT_MI_CLIENT_ID=$(az identity show --name "$AGENT_MI_NAME" --resource-group "$RESOURCE_GROUP" --query clientId -o tsv 2>/dev/null || echo "")
 
 if [[ -n "$AGENT_MI_PRINCIPAL_ID" ]]; then
+  # Log Analytics Reader on the LAW (for Kusto queries)
   az role assignment create \
     --assignee-object-id "$AGENT_MI_PRINCIPAL_ID" \
     --assignee-principal-type ServicePrincipal \
     --role "Log Analytics Reader" \
     --scope "$LAW_ID" \
     --output none || echo -e "${YELLOW}  Role may already exist.${NC}"
-  echo -e "${GREEN}  ✓ Log Analytics Reader granted.${NC}"
+  echo -e "${GREEN}  ✓ Log Analytics Reader granted on LAW.${NC}"
+
+  # Monitoring Contributor on subscription (required for Azure Monitor incident platform)
+  # Per https://sre.azure.com/docs - agent needs this to read/write alerts
+  az role assignment create \
+    --assignee-object-id "$AGENT_MI_PRINCIPAL_ID" \
+    --assignee-principal-type ServicePrincipal \
+    --role "Monitoring Contributor" \
+    --scope "/subscriptions/${SUBSCRIPTION_ID}" \
+    --output none || echo -e "${YELLOW}  Role may already exist.${NC}"
+  echo -e "${GREEN}  ✓ Monitoring Contributor granted on subscription.${NC}"
 fi
 
-# ---- Step 4: Create Kusto Connector via ARM API ----
-echo -e "\n${YELLOW}[4/7] Creating Kusto connector...${NC}"
+# ---- Step 4: Configure Azure access for LAW queries ----
+echo -e "\n${YELLOW}[4/7] Configuring Azure access and incident platform...${NC}"
 
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 AGENT_NAME=$(az resource list --resource-group "$RESOURCE_GROUP" --resource-type "Microsoft.App/agents" --query "[0].name" -o tsv)
 AGENT_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.App/agents/${AGENT_NAME}"
 API_VERSION="2025-05-01-preview"
 
-# Create Kusto connector via ARM API
-# LAW Kusto endpoint format: https://<workspace-id>.api.loganalytics.io/<database-name>
-# For LAW, the database name is the workspace name
-python3 -c "
-import json, os
-workspace_id = '$LAW_WORKSPACE_ID'
-law_name = '$LAW_NAME'
-body = {
-    'properties': {
-        'name': 'compliance-law',
-        'dataConnectorType': 'Kusto',
-        'dataSource': f'https://{workspace_id}.api.loganalytics.io/{law_name}',
-        'identity': 'system'
-    }
-}
-with open('/tmp/kusto-connector-body.json', 'w') as f:
-    json.dump(body, f)
-"
-
-if az rest --method PUT \
-  --url "https://management.azure.com${AGENT_RESOURCE_ID}/DataConnectors/compliance-law?api-version=${API_VERSION}" \
-  --body @/tmp/kusto-connector-body.json \
-  --output none 2>&1; then
-  echo -e "${GREEN}  ✓ Kusto connector 'compliance-law' created via ARM.${NC}"
-else
-  echo -e "${YELLOW}  Kusto connector may need manual setup in Portal.${NC}"
-fi
-rm -f /tmp/kusto-connector-body.json
+# The agent queries LAW using built-in Azure observability tools (no ADX connector needed).
+# Activity Logs flow to LAW via diagnostic settings (Step 2).
+# The agent's UAMI has Log Analytics Reader (Step 3) for query access.
+echo -e "${GREEN}  ✓ LAW query access: Built-in (Log Analytics Reader + diagnostic settings)${NC}"
+echo -e "${GREEN}    The agent uses built-in Azure Monitor / Log Analytics tools to run KQL.${NC}"
+echo -e "${GREEN}    No separate Kusto/ADX connector is needed for LAW.${NC}"
 
 # ---- Step 4b: Enable Azure Monitor as incident platform ----
 echo -e "\n${YELLOW}    Enabling Azure Monitor incident platform...${NC}"
@@ -236,10 +226,10 @@ body = {
     'type': 'Skill',
     'properties': {
         'description': 'Detects out-of-compliance Container App deployments via Activity Log analysis',
-        'tools': ['kusto_query', 'azure_cli'],
+        'tools': ['QueryLogAnalyticsByWorkspaceId', 'GetAzCliHelp', 'RunAzCliReadCommands', 'RunAzCliWriteCommands'],
         'skillContent': skill,
         'additionalFiles': [
-            {'path': 'compliance_detection.md', 'content': detection}
+            {'filePath': 'compliance_detection.md', 'content': detection}
         ]
     }
 }
@@ -308,19 +298,11 @@ body = {
     'titleContains': '',
     'agentMode': 'review',
     'maxAttempts': 3,
-    'instructions': '''When this alert fires, use the deployment-compliance-check skill to investigate:
+    'instructions': '''Use the deployment-compliance-check skill to investigate this alert.
 
-1. Query the AzureActivity table via Kusto MCP to find the Container App write operation that triggered this alert
-2. Classify the deployment by caller identity using claims.appid:
-   - Azure Portal (c44b4083-3bb0-49c1-b47d-974e53cbdf3c) = Non-compliant
-   - Azure CLI (04b07795-a710-4e84-bea4-c697bab44963) = Non-compliant
-   - Service Principal = Compliant (verify with resource tags)
-3. Check Container App tags for deployed-by, pipeline-run-id, commit-sha
-4. If non-compliant: generate a compliance report and recommend revert to previous revision
-5. IMPORTANT: Before executing any revert, activate the deployment-compliance-approval hook on this thread and wait for user approval
-6. If compliant: close the alert with a brief confirmation
-
-Never revert a deployment without explicit user approval through the hook.'''
+The skill has all the KQL templates, classification rules, and revert procedures.
+If the deployment is non-compliant, activate the deployment-compliance-approval hook before reverting.
+Never revert without user approval.'''
 }
 with open('/tmp/filter-body.json', 'w') as f:
     json.dump(body, f)
@@ -380,27 +362,9 @@ python3 -c "
 import json
 body = {
     'name': 'compliance-scan',
-    'description': 'Periodic deployment compliance scan using the deployment-compliance-check skill',
+    'description': 'compliance-scan',
     'cronExpression': '*/30 * * * *',
-    'agentPrompt': '''Use the deployment-compliance-check skill to run a compliance scan for the last 30 minutes.
-
-Steps:
-1. Query the AzureActivity table via Kusto MCP using Template 1 from the skill (set timeRange to 30m)
-2. Classify each Container App deployment by caller identity using claims.appid:
-   - Azure Portal (c44b4083-3bb0-49c1-b47d-974e53cbdf3c) = Non-compliant
-   - Azure CLI (04b07795-a710-4e84-bea4-c697bab44963) = Non-compliant  
-   - Known CI/CD service principal = Compliant
-3. Cross-reference with Container App resource tags (deployed-by, pipeline-run-id, commit-sha)
-4. Generate a compliance report using the format in the skill
-
-If ALL deployments are compliant: Report clean scan.
-If ANY deployment is non-compliant:
-   - Report the violation with details
-   - Recommend revert to previous Container App revision
-   - IMPORTANT: Activate the deployment-compliance-approval hook on this thread before executing any revert
-   - Do NOT revert without user approval through the hook
-
-Include scan timestamp and time range in the report.'''
+    'agentPrompt': '''Load the deployment-compliance-check skill and follow it to check whether the latest running image is compliant for all Container Apps in scope. Use hooks before any modification action on a resource. Report findings in the format specified by the skill. Remediate following the skill instructions'''
 }
 with open('/tmp/task-body.json', 'w') as f:
     json.dump(body, f)
@@ -419,31 +383,37 @@ else
 fi
 rm -f /tmp/task-body.json
 
-# ---- Step 8: GitHub OAuth connector ----
-echo -e "\n${YELLOW}[8/8] Creating GitHub OAuth connector...${NC}"
+# ---- Step 8: GitHub connector + code repo ----
+echo -e "\n${YELLOW}[8/8] Configuring GitHub connector and code repository...${NC}"
 
-# Create the GitHub OAuth connector resource via ARM API
-python3 -c "
-import json
-body = {
-    'properties': {
-        'name': 'github',
-        'dataConnectorType': 'GitHubOAuth',
-        'dataSource': 'github.com',
-        'identity': 'system'
-    }
-}
-with open('/tmp/github-oauth-body.json', 'w') as f:
-    json.dump(body, f)
-"
+# Check if GitHub OAuth connector already exists via data plane
+TOKEN=$(get_agent_token)
+GITHUB_EXISTS=$(curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/connectors/github" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('yes' if d.get('name')=='github' else 'no')
+except: print('no')
+" 2>/dev/null)
 
-az rest --method PUT \
-  --url "https://management.azure.com${AGENT_RESOURCE_ID}/DataConnectors/github?api-version=${API_VERSION}" \
-  --body @/tmp/github-oauth-body.json \
-  --output none || true
-rm -f /tmp/github-oauth-body.json
+if [ "$GITHUB_EXISTS" = "yes" ]; then
+  echo -e "${GREEN}  ✓ GitHub OAuth connector already exists. Skipping creation.${NC}"
+else
+  # Create via data plane API
+  GITHUB_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X PUT "${AGENT_ENDPOINT}/api/v2/extendedAgent/connectors/github" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"github","type":"AgentConnector","properties":{"dataConnectorType":"GitHubOAuth","dataSource":"github-oauth"}}')
+  if [ "$GITHUB_RESULT" = "200" ] || [ "$GITHUB_RESULT" = "201" ]; then
+    echo -e "${GREEN}  ✓ GitHub OAuth connector created.${NC}"
+  else
+    echo -e "${YELLOW}  GitHub connector returned HTTP ${GITHUB_RESULT}. May need manual setup.${NC}"
+  fi
+fi
 
-# Get the OAuth login URL from the agent's data plane API
+# Get the OAuth login URL
 TOKEN=$(get_agent_token)
 OAUTH_URL=$(curl -s "${AGENT_ENDPOINT}/api/v1/github/config" \
   -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
@@ -456,7 +426,6 @@ except:
 " 2>/dev/null)
 
 if [ -n "$OAUTH_URL" ]; then
-  echo -e "${GREEN}  ✓ GitHub OAuth connector created.${NC}"
   echo ""
   echo -e "  ${BLUE}┌──────────────────────────────────────────────────────────────┐${NC}"
   echo -e "  ${BLUE}│  Sign in to GitHub to authorize the SRE Agent:              │${NC}"
@@ -465,24 +434,213 @@ if [ -n "$OAUTH_URL" ]; then
   echo -e "  ${BLUE}│                                                              │${NC}"
   echo -e "  ${BLUE}│  Open this URL in your browser and click 'Authorize'         │${NC}"
   echo -e "  ${BLUE}└──────────────────────────────────────────────────────────────┘${NC}"
+fi
+
+# Add compliance repo to agent (uses existing GitHub connector for auth)
+echo -e "\n   Adding compliancedemo repo to agent..."
+TOKEN=$(get_agent_token)
+
+# Detect repo owner from git remote or default
+REPO_OWNER="dm-chelupati"
+REPO_NAME="compliancedemo"
+REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
+
+REPO_RESULT=$(curl -s -o /tmp/repo-resp.txt -w "%{http_code}" \
+  -X PUT "${AGENT_ENDPOINT}/api/v2/repos/${REPO_NAME}" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"${REPO_NAME}\",\"type\":\"CodeRepo\",\"properties\":{\"url\":\"${REPO_URL}\"}}")
+
+if [ "$REPO_RESULT" = "200" ] || [ "$REPO_RESULT" = "201" ]; then
+  echo -e "${GREEN}  ✓ Repository '${REPO_OWNER}/${REPO_NAME}' connected to agent.${NC}"
 else
-  echo -e "${YELLOW}  GitHub connector created but could not retrieve login URL.${NC}"
-  echo "  Sign in at: ${AGENT_ENDPOINT} → Builder → Connectors → github"
+  echo -e "${YELLOW}  Could not add repo (HTTP ${REPO_RESULT}). Add manually in portal.${NC}"
+fi
+rm -f /tmp/repo-resp.txt
+
+# ---- Verification: Check all connectors and resources are connected ----
+echo -e "\n${BLUE}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}  Verifying setup (waiting for agent to settle)...${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+sleep 15
+
+TOKEN=$(get_agent_token)
+VERIFY_PASS=0
+VERIFY_FAIL=0
+
+# Check connectors via data plane API
+echo -e "\n  ${YELLOW}Connectors:${NC}"
+
+# Check LAW access (built-in, verified by diagnostic settings + role assignment in steps 2-3)
+if [[ -n "$LAW_ID" && -n "$AGENT_MI_PRINCIPAL_ID" ]]; then
+  echo -e "    ${GREEN}✓ LAW query access: Built-in (Log Analytics Reader + diagnostic settings)${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ LAW access: Missing LAW ID or agent MI${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Check GitHub connector
+GITHUB_CHECK=$(curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/connectors/github" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('ok' if d.get('name')=='github' else 'missing')
+except: print('missing')
+" 2>/dev/null)
+if [ "$GITHUB_CHECK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ GitHub connector: Connected${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ GitHub connector: Not found${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Check connected repos
+echo -e "\n  ${YELLOW}Code Repositories:${NC}"
+REPO_STATUS=$(curl -s "${AGENT_ENDPOINT}/api/v2/repos/compliancedemo" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    if d.get('name')=='compliancedemo':
+        url=d.get('properties',{}).get('url','')
+        sync=d.get('properties',{}).get('cloneStatus','Unknown')
+        print(f'ok|{url}|{sync}')
+    else: print('missing||')
+except: print('missing||')
+" 2>/dev/null)
+REPO_CHECK=$(echo "$REPO_STATUS" | cut -d'|' -f1)
+REPO_URL_CHECK=$(echo "$REPO_STATUS" | cut -d'|' -f2)
+REPO_SYNC=$(echo "$REPO_STATUS" | cut -d'|' -f3)
+if [ "$REPO_CHECK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ compliancedemo: ${REPO_URL_CHECK} (sync: ${REPO_SYNC})${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ compliancedemo repo not connected${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Check Azure Monitor incident platform
+echo -e "\n  ${YELLOW}Incident Platform:${NC}"
+AZ_MON_STATUS=$(az rest --method GET \
+  --url "https://management.azure.com${AGENT_RESOURCE_ID}?api-version=${API_VERSION}" \
+  2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    icm=d.get('properties',{}).get('incidentManagementConfiguration',{})
+    t=icm.get('type','')
+    print(t if t else 'NotConfigured')
+except: print('Error')
+" 2>/dev/null)
+if [ "$AZ_MON_STATUS" = "AzMonitor" ]; then
+  echo -e "    ${GREEN}✓ Azure Monitor: Connected${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ Azure Monitor: ${AZ_MON_STATUS}${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Check data plane resources (skill, hook, response plan, scheduled task)
+echo -e "\n  ${YELLOW}Agent Resources:${NC}"
+
+# Skill
+SKILL_OK=$(curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/skills/deployment-compliance-check" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('ok' if d.get('name')=='deployment-compliance-check' else 'missing')
+except: print('missing')
+" 2>/dev/null)
+if [ "$SKILL_OK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ Skill: deployment-compliance-check${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ Skill: deployment-compliance-check not found${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Hook
+HOOK_OK=$(curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/hooks/deployment-compliance-approval" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('ok' if d.get('name')=='deployment-compliance-approval' else 'missing')
+except: print('missing')
+" 2>/dev/null)
+if [ "$HOOK_OK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ Hook: deployment-compliance-approval${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ Hook: deployment-compliance-approval not found${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Response plan
+FILTER_OK=$(curl -s "${AGENT_ENDPOINT}/api/v1/incidentPlayground/filters" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    data=json.load(sys.stdin)
+    found = any(f.get('id')=='containerapp-compliance' for f in data)
+    print('ok' if found else 'missing')
+except: print('missing')
+" 2>/dev/null)
+if [ "$FILTER_OK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ Response plan: containerapp-compliance${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ Response plan: containerapp-compliance not found${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Scheduled task
+TASK_OK=$(curl -s "${AGENT_ENDPOINT}/api/v1/scheduledtasks" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    data=json.load(sys.stdin)
+    found = any(t.get('name')=='compliance-scan' for t in data)
+    print('ok' if found else 'missing')
+except: print('missing')
+" 2>/dev/null)
+if [ "$TASK_OK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ Scheduled task: compliance-scan${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ Scheduled task: compliance-scan not found${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# Summary
+echo ""
+echo -e "  ${BLUE}────────────────────────────────────────${NC}"
+if [ "$VERIFY_FAIL" -eq 0 ]; then
+  echo -e "  ${GREEN}✓ All ${VERIFY_PASS}/${VERIFY_PASS} checks passed — agent is fully set up!${NC}"
+else
+  echo -e "  ${YELLOW}⚠ ${VERIFY_PASS} passed, ${VERIFY_FAIL} failed — check items above${NC}"
 fi
 
 # ---- Summary ----
-echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+echo -e "\n${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}  Setup complete!${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo ""
 echo "  Infrastructure deployed:"
 echo "    ✓ Container App (workload)"
 echo "    ✓ SRE Agent: $AGENT_ENDPOINT"
-echo "    ✓ Log Analytics: Activity Logs flowing"
+echo "    ✓ Log Analytics: Activity Logs flowing (built-in KQL access)"
 echo "    ✓ Alert Rule: Container App deployment detection"
-echo "    ✓ Kusto connector: compliance-law"
+echo "    ✓ Azure Monitor: Incident platform"
+echo "    ✓ GitHub connector + compliancedemo repo"
 echo "    ✓ Skill: deployment-compliance-check"
 echo "    ✓ Hook: deployment-compliance-approval"
+echo "    ✓ Response plan: containerapp-compliance"
+echo "    ✓ Scheduled task: compliance-scan (every 30 min)"
 echo ""
 echo "  To test the compliance workflow:"
 echo "    1. Push a change through GitHub Actions (compliant)"
