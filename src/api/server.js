@@ -64,6 +64,30 @@ app.post('/api/todos/:id/restore', (req, res) => {
   res.json(restored);
 });
 
+// Search todos by title with optional status filter
+app.get('/api/todos/search', (req, res) => {
+  const { q, status } = req.query;
+  let results = [...todos];
+  if (q) {
+    const query = q.toLowerCase();
+    results = results.filter(t => t.title.toLowerCase().includes(query));
+  }
+  if (status === 'active') results = results.filter(t => !t.completed);
+  else if (status === 'completed') results = results.filter(t => t.completed);
+  res.json({ query: q || '', status: status || 'all', count: results.length, results });
+});
+
+// Export todos as CSV
+app.get('/api/todos/export', (req, res) => {
+  const rows = [['id', 'title', 'completed', 'createdAt'].join(',')];
+  for (const t of todos) {
+    rows.push([t.id, `"${t.title}"`, t.completed, t.createdAt || ''].join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="todos.csv"');
+  res.send(rows.join('\n'));
+});
+
 // Stats endpoint — counts of active and deleted todos
 app.get('/api/todos/stats', (req, res) => {
   res.json({
