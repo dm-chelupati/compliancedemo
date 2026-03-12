@@ -8,15 +8,15 @@ const PRIORITIES = ['low', 'medium', 'high'];
 
 // In-memory todo storage
 let todos = [
-  { id: 1, title: 'Deploy via CI/CD pipeline', completed: true, priority: 'high' },
-  { id: 2, title: 'Set up compliance monitoring', completed: false, priority: 'medium' },
+  { id: 1, title: 'Deploy via CI/CD pipeline', completed: true, priority: 'high', dueDate: null, createdAt: '2026-03-11T00:00:00Z' },
+  { id: 2, title: 'Set up compliance monitoring', completed: false, priority: 'medium', dueDate: '2026-03-15T00:00:00Z', createdAt: '2026-03-11T00:00:00Z' },
 ];
 let deletedTodos = [];
 let nextId = 3;
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', version: '1.1.0', timestamp: new Date().toISOString() });
+  res.json({ status: 'healthy', version: '1.2.0', timestamp: new Date().toISOString() });
 });
 
 // Get all active todos (supports ?priority=high and ?completed=true filters)
@@ -48,15 +48,25 @@ app.get('/api/todos/deleted', (req, res) => {
   res.json(deletedTodos);
 });
 
-// Create todo (accepts optional priority: low, medium, high — defaults to medium)
+// Create todo (accepts optional priority and dueDate)
 app.post('/api/todos', (req, res) => {
-  const { title, priority } = req.body;
+  const { title, priority, dueDate } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
   const todoPriority = priority || 'medium';
   if (!PRIORITIES.includes(todoPriority)) {
     return res.status(400).json({ error: `priority must be one of: ${PRIORITIES.join(', ')}` });
   }
-  const todo = { id: nextId++, title, completed: false, priority: todoPriority };
+  if (dueDate && isNaN(Date.parse(dueDate))) {
+    return res.status(400).json({ error: 'dueDate must be a valid ISO date string' });
+  }
+  const todo = {
+    id: nextId++,
+    title,
+    completed: false,
+    priority: todoPriority,
+    dueDate: dueDate || null,
+    createdAt: new Date().toISOString(),
+  };
   todos.push(todo);
   res.status(201).json(todo);
 });
@@ -72,6 +82,12 @@ app.patch('/api/todos/:id', (req, res) => {
       return res.status(400).json({ error: `priority must be one of: ${PRIORITIES.join(', ')}` });
     }
     todo.priority = req.body.priority;
+  }
+  if (req.body.dueDate !== undefined) {
+    if (req.body.dueDate !== null && isNaN(Date.parse(req.body.dueDate))) {
+      return res.status(400).json({ error: 'dueDate must be a valid ISO date string or null' });
+    }
+    todo.dueDate = req.body.dueDate;
   }
   res.json(todo);
 });
@@ -94,6 +110,14 @@ app.post('/api/todos/:id/restore', (req, res) => {
   delete restored.deletedAt;
   todos.push(restored);
   res.json(restored);
+});
+
+// Get todos due within the next N hours (default 24)
+app.get('/api/todos/due-soon', (req, res) => {
+  const hours = parseInt(req.query.hours) || 24;
+  const cutoff = new Date(Date.now() + hours * 60 * 60 * 1000);
+  const dueSoon = todos.filter(t => !t.completed && t.dueDate && new Date(t.dueDate) <= cutoff);
+  res.json(dueSoon);
 });
 
 // Stats endpoint — counts of active and deleted todos
