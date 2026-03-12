@@ -14,6 +14,12 @@ CONTAINER_APP="ca-api-compliancedemo"
 ACR_NAME="acrcompliancedemoenqgb2"
 IMAGE="compliance-demo-api"
 
+# Compliance tags — required for deployment-compliance-check signal 2
+DEPLOYED_BY="pipeline"
+DEPLOYMENT_METHOD="${DEPLOYMENT_METHOD:-script}"
+PIPELINE_RUN_ID="${GITHUB_RUN_ID:-local-$(date +%s)}"
+COMMIT_SHA="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+
 TAG="${1:-latest}"
 FULL_IMAGE="${ACR_NAME}.azurecr.io/${IMAGE}:${TAG}"
 
@@ -22,6 +28,11 @@ az containerapp update \
   --name "$CONTAINER_APP" \
   --resource-group "$RESOURCE_GROUP" \
   --image "$FULL_IMAGE" \
+  --tags \
+    deployed-by="$DEPLOYED_BY" \
+    deployment-method="$DEPLOYMENT_METHOD" \
+    pipeline-run-id="$PIPELINE_RUN_ID" \
+    commit-sha="$COMMIT_SHA" \
   --output none
 
 FQDN=$(az containerapp show \
