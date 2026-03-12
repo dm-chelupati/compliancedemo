@@ -1,20 +1,17 @@
 # ============================================================
-# GitHub Actions — Build & Push to ACR
-# This is the CI/CD pipeline that represents "compliant" deployments.
-# Builds image → pushes to ACR.
-# Container App is updated automatically by an ACR Task with managed identity.
+# GitHub Actions — Build, Push & Deploy
+# CI/CD pipeline for compliant deployments to Azure Container App.
 #
 # How it works:
-# 1. GH Action builds + pushes image to ACR (using ACR admin credentials)
-# 2. ACR Task "deploy-containerapp" runs automatically (triggered by schedule or manually)
-#    - Uses managed identity (no SP/OIDC needed)
-#    - Calls: az containerapp update --image latest
+# 1. Authenticates to Azure via OIDC (User-Assigned Managed Identity)
+# 2. Builds Docker image, tags with commit SHA (no :latest)
+# 3. Pushes to ACR
+# 4. Updates Container App directly with the SHA-tagged image
 #
-# For regular Azure customers (non-Microsoft tenant):
-#   az ad sp create-for-rbac works fine — just add AZURE_CREDENTIALS secret
-#   and use azure/login@v2 + az containerapp update directly.
+# Compliance: Uses UAMI id-compliancedemo-deploy
+# (appId: b2eb3f37-8a6e-4cf7-b583-a703da1e8328) — tracked as compliant.
 # ============================================================
-name: Deploy Container App
+name: Build and Deploy
 
 on:
   push:
@@ -23,28 +20,38 @@ on:
       - 'src/api/**'
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 env:
-  ACR_NAME: ${{ vars.ACR_NAME }}
+  ACR_NAME: acrcompliancedemoenqgb2
   IMAGE_NAME: compliance-demo-api
+  RESOURCE_GROUP: rg-compliancedemo
+  CONTAINER_APP: ca-api-compliancedemo
+  AZURE_CLIENT_ID: b2eb3f37-8a6e-4cf7-b583-a703da1e8328
+  AZURE_SUBSCRIPTION_ID: cbf44432-7f45-4906-a85d-d2b14a1e8328
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to ACR
-        uses: docker/login-action@v3
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          registry: ${{ env.ACR_NAME }}.azurecr.io
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
 
       - name: Build and push image
         run: |
           IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          LATEST_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
 
           docker build \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
@@ -54,32 +61,32 @@ jobs:
             --label "commit-sha=${{ github.sha }}" \
             --label "branch=${{ github.ref_name }}" \
             -t "$IMAGE_TAG" \
-            -t "$LATEST_TAG" \
             src/api/
 
           docker push "$IMAGE_TAG"
-          docker push "$LATEST_TAG"
+          echo "✅ Pushed: $IMAGE_TAG"
 
-      - name: Trigger Container App deploy
+      - name: Deploy to Container App
         run: |
-          # Trigger ACR Task to update Container App
-          # Uses management API via ACR admin exchange token
-          EXCHANGE_TOKEN=$(curl -sf -X POST \
-            "https://${{ env.ACR_NAME }}.azurecr.io/oauth2/exchange" \
-            -d "grant_type=access_token&service=${{ env.ACR_NAME }}.azurecr.io&tenant=${{ secrets.AZURE_TENANT_ID }}&access_token=" \
-            -u "${{ secrets.ACR_USERNAME }}:${{ secrets.ACR_PASSWORD }}" \
-            | jq -r '.refresh_token // empty') || true
+          echo "Deploying ${{ github.sha }} to ${{ env.CONTAINER_APP }}..."
 
-          if [ -z "$EXCHANGE_TOKEN" ]; then
-            echo "⚠️ Could not trigger auto-deploy. Run manually:"
-            echo '```'
-            echo "az acr task run --name deploy-containerapp --registry ${{ env.ACR_NAME }}"
-            echo '```'
-          fi
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --subscription ${{ env.AZURE_SUBSCRIPTION_ID }} \
+            --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            --set-env-vars \
+              "COMMIT_SHA=${{ github.sha }}" \
+              "DEPLOYED_BY=pipeline" \
+            --output none
 
-          echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Deployment complete"
+
+      - name: Summary
+        run: |
+          echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deploy**: Run \`az acr task run --name deploy-containerapp --registry ${{ env.ACR_NAME }}\` or \`bash scripts/deploy.sh ${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container App**: ${{ env.CONTAINER_APP }}" >> $GITHUB_STEP_SUMMARY
           echo "- **App URL**: https://ca-api-compliancedemo.ashypond-ed21e6b9.eastus2.azurecontainerapps.io" >> $GITHUB_STEP_SUMMARY
