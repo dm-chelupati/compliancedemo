@@ -3,25 +3,40 @@
 # CI/CD pipeline for compliant deployments to Azure Container App.
 #
 # How it works:
-# 1. Authenticates to Azure via OIDC (User-Assigned Managed Identity)
-# 2. Builds Docker image, tags with commit SHA (no :latest)
-# 3. Pushes to ACR
-# 4. Updates Container App directly with the SHA-tagged image
+# 1. Builds Docker image, tags with commit SHA + :latest
+# 2. Pushes to ACR using admin credentials (ACR_USERNAME/ACR_PASSWORD)
+# 3. Authenticates to Azure via service principal (client credentials)
+# 4. Updates Container App directly with az containerapp update
 #
-# Compliance: Uses UAMI id-compliancedemo-deploy
-# (appId: b2eb3f37-8a6e-4cf7-b583-a703da1e8328) — tracked as compliant.
+# Why not OIDC?
+# Conditional Access Policy (AADSTS53003) blocks federated identity
+# token issuance from GitHub-hosted runners. Client credentials
+# (grant_type=client_credentials) uses a different OAuth2 flow that
+# is not subject to user-targeted CAPs.
+#
+# Required secrets:
+#   ACR_USERNAME / ACR_PASSWORD  — ACR admin credentials
+#   AZURE_CLIENT_ID              — Service principal app ID
+#   AZURE_CLIENT_SECRET          — Service principal secret
+#   AZURE_TENANT_ID              — Azure AD tenant ID
+#
+# To create the service principal (one-time setup):
+#   az ad sp create-for-rbac --name "compliancedemo-cicd" \
+#     --role Contributor \
+#     --scopes /subscriptions/cbf44432-7f45-4906-a85d-d2b14a1e8328/resourceGroups/rg-compliancedemo
+#   Then add appId → AZURE_CLIENT_ID, password → AZURE_CLIENT_SECRET
 # ============================================================
-name: Build and Deploy
+name: Deploy Container App
 
 on:
   push:
     branches: [main]
     paths:
       - 'src/api/**'
+      - '.github/workflows/deploy-container-app.yml'
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -29,7 +44,6 @@ env:
   IMAGE_NAME: compliance-demo-api
   RESOURCE_GROUP: rg-compliancedemo
   CONTAINER_APP: ca-api-compliancedemo
-  AZURE_CLIENT_ID: b2eb3f37-8a6e-4cf7-b583-a703da1e8328
   AZURE_SUBSCRIPTION_ID: cbf44432-7f45-4906-a85d-d2b14a1e8328
 
 jobs:
@@ -39,19 +53,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
       - name: Log in to ACR
-        run: az acr login --name ${{ env.ACR_NAME }}
+        run: |
+          echo "${{ secrets.ACR_PASSWORD }}" | \
+            docker login "${{ env.ACR_NAME }}.azurecr.io" \
+              -u "${{ secrets.ACR_USERNAME }}" --password-stdin
 
       - name: Build and push image
         run: |
           IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          LATEST_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
 
           docker build \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
@@ -61,19 +72,29 @@ jobs:
             --label "commit-sha=${{ github.sha }}" \
             --label "branch=${{ github.ref_name }}" \
             -t "$IMAGE_TAG" \
+            -t "$LATEST_TAG" \
             src/api/
 
           docker push "$IMAGE_TAG"
+          docker push "$LATEST_TAG"
           echo "✅ Pushed: $IMAGE_TAG"
+
+      - name: Azure Login (Service Principal)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Container App
         run: |
           echo "Deploying ${{ github.sha }} to ${{ env.CONTAINER_APP }}..."
 
           az containerapp update \
-            --name ${{ env.CONTAINER_APP }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --subscription ${{ env.AZURE_SUBSCRIPTION_ID }} \
+            --name "${{ env.CONTAINER_APP }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --subscription "${{ env.AZURE_SUBSCRIPTION_ID }}" \
             --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" \
             --set-env-vars \
               "COMMIT_SHA=${{ github.sha }}" \
