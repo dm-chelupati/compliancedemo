@@ -3,10 +3,13 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+// Valid priority levels
+const PRIORITIES = ['low', 'medium', 'high'];
+
 // In-memory todo storage
 let todos = [
-  { id: 1, title: 'Deploy via CI/CD pipeline', completed: true },
-  { id: 2, title: 'Set up compliance monitoring', completed: false },
+  { id: 1, title: 'Deploy via CI/CD pipeline', completed: true, priority: 'high' },
+  { id: 2, title: 'Set up compliance monitoring', completed: false, priority: 'medium' },
 ];
 let deletedTodos = [];
 let nextId = 3;
@@ -16,9 +19,28 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Get all active todos
+// Get all active todos (supports ?priority=high and ?completed=true filters)
 app.get('/api/todos', (req, res) => {
-  res.json(todos);
+  let result = todos;
+  if (req.query.priority) {
+    result = result.filter(t => t.priority === req.query.priority);
+  }
+  if (req.query.completed !== undefined) {
+    const completed = req.query.completed === 'true';
+    result = result.filter(t => t.completed === completed);
+  }
+  res.json(result);
+});
+
+// Search todos by title (case-insensitive substring match)
+app.get('/api/todos/search', (req, res) => {
+  const q = (req.query.q || '').toLowerCase();
+  if (!q) return res.status(400).json({ error: 'query parameter "q" is required' });
+  let result = todos.filter(t => t.title.toLowerCase().includes(q));
+  if (req.query.priority) {
+    result = result.filter(t => t.priority === req.query.priority);
+  }
+  res.json(result);
 });
 
 // Get deleted todos
@@ -26,11 +48,15 @@ app.get('/api/todos/deleted', (req, res) => {
   res.json(deletedTodos);
 });
 
-// Create todo
+// Create todo (accepts optional priority: low, medium, high — defaults to medium)
 app.post('/api/todos', (req, res) => {
-  const { title } = req.body;
+  const { title, priority } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
-  const todo = { id: nextId++, title, completed: false };
+  const todoPriority = priority || 'medium';
+  if (!PRIORITIES.includes(todoPriority)) {
+    return res.status(400).json({ error: `priority must be one of: ${PRIORITIES.join(', ')}` });
+  }
+  const todo = { id: nextId++, title, completed: false, priority: todoPriority };
   todos.push(todo);
   res.status(201).json(todo);
 });
@@ -41,6 +67,12 @@ app.patch('/api/todos/:id', (req, res) => {
   if (!todo) return res.status(404).json({ error: 'not found' });
   if (req.body.title !== undefined) todo.title = req.body.title;
   if (req.body.completed !== undefined) todo.completed = req.body.completed;
+  if (req.body.priority !== undefined) {
+    if (!PRIORITIES.includes(req.body.priority)) {
+      return res.status(400).json({ error: `priority must be one of: ${PRIORITIES.join(', ')}` });
+    }
+    todo.priority = req.body.priority;
+  }
   res.json(todo);
 });
 
