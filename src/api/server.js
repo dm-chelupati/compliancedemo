@@ -16,7 +16,7 @@ let nextId = 3;
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({ status: 'healthy', version: '1.1.0', timestamp: new Date().toISOString() });
 });
 
 // Get all active todos (supports ?priority=high and ?completed=true filters)
