@@ -8,6 +8,7 @@ let todos = [
   { id: 1, title: 'Deploy via CI/CD pipeline', completed: true },
   { id: 2, title: 'Set up compliance monitoring', completed: false },
 ];
+let deletedTodos = [];
 let nextId = 3;
 
 // Health check
@@ -15,9 +16,14 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Get all todos
+// Get all active todos
 app.get('/api/todos', (req, res) => {
   res.json(todos);
+});
+
+// Get deleted todos
+app.get('/api/todos/deleted', (req, res) => {
+  res.json(deletedTodos);
 });
 
 // Create todo
@@ -38,10 +44,24 @@ app.patch('/api/todos/:id', (req, res) => {
   res.json(todo);
 });
 
-// Delete todo
+// Soft-delete todo (moves to deleted list)
 app.delete('/api/todos/:id', (req, res) => {
-  todos = todos.filter(t => t.id !== parseInt(req.params.id));
+  const idx = todos.findIndex(t => t.id === parseInt(req.params.id));
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  const [removed] = todos.splice(idx, 1);
+  removed.deletedAt = new Date().toISOString();
+  deletedTodos.push(removed);
   res.status(204).send();
+});
+
+// Restore a deleted todo
+app.post('/api/todos/:id/restore', (req, res) => {
+  const idx = deletedTodos.findIndex(t => t.id === parseInt(req.params.id));
+  if (idx === -1) return res.status(404).json({ error: 'not found in deleted items' });
+  const [restored] = deletedTodos.splice(idx, 1);
+  delete restored.deletedAt;
+  todos.push(restored);
+  res.json(restored);
 });
 
 const port = process.env.PORT || 8080;
