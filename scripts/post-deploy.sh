@@ -254,7 +254,7 @@ HOOK_BODY=$(cat <<'EOF'
   "type": "GlobalHook",
   "properties": {
     "eventType": "Stop",
-    "activationMode": "onDemand",
+    "activationMode": "always",
     "description": "Requires explicit user approval before reverting a non-compliant Container App deployment",
     "hook": {
       "type": "prompt",
