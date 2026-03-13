@@ -1,12 +1,12 @@
 # ============================================================
 # Global Hook: Deployment Compliance Approval
 # Requires user approval before reverting a non-compliant deployment.
-# Activation: on-demand (must be activated per thread)
+# Activation: always (runs on every Stop event)
 # ============================================================
 
 name: deployment-compliance-approval
 event_type: Stop
-activation_mode: on-demand
+activation_mode: always
 description: >
   Requires explicit user approval before the agent reverts or modifies
   a Container App deployment. Fires on the Stop event and checks if the
