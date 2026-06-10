@@ -32,6 +32,8 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 - `repository` = should match the expected repo
 - `workflow` = should match the expected workflow name
 
+If `az acr` or ARM `listCredentials` is unavailable to the agent, use the registry OAuth exchange flow with the agent managed identity: request a token for `https://containerregistry.azure.net/.default`, exchange it at `https://<registry>/oauth2/exchange`, mint a repository-scoped token at `https://<registry>/oauth2/token`, then query `/acr/v1/_catalog` and `/acr/v1/<repo>/_tags` directly.
+
 **All labels present** + known pipeline caller -> **COMPLIANT**
 **All labels present** + unknown caller -> **INVESTIGATE**
 **Any labels missing** -> **NON-COMPLIANT** (image was not built by the pipeline)
@@ -45,6 +47,8 @@ Return **BOOTSTRAP / NOT YET EVALUABLE** when all of the following are true:
 - The app is still running the seeded fallback image rather than a workload image from the target ACR repository
 - The target ACR repository does not exist yet, returns `NAME_UNKNOWN`, or the ACR catalog is still empty
 - The only confirmed write event is the initial bootstrap create/update rather than a later rollout
+
+For this demo, that initial bootstrap create/update can be emitted by `azd up` as a user principal or Azure CLI caller. If the current revision still uses the seeded fallback image and the workload repository is absent from ACR, classify the result as **BOOTSTRAP / NOT YET EVALUABLE** instead of **NON-COMPLIANT** even when the caller would otherwise fail the policy check.
 
 During that bootstrap window, a degraded revision with a message like `TargetPort 8080 does not match the listening port 80.` is expected for this demo because the seeded sample image listens on port 80. Do not classify that condition alone as **NON-COMPLIANT**.
 

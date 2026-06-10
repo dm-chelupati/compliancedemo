@@ -64,12 +64,15 @@ This is the most important step. Even if the caller is the pipeline's managed id
 To catch this:
 - Get the currently running image reference from the Container App
 - Retrieve the image config from ACR and check for the expected labels (`deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`, and related workflow metadata)
+- If `az acr` / ARM credential discovery is unavailable, use the registry OAuth exchange flow with the agent managed identity (`https://containerregistry.azure.net/.default` -> `/oauth2/exchange` -> `/oauth2/token`) and query the repository directly
 - If labels are missing or invalid -> NON-COMPLIANT regardless of caller
 
 This closes the "portal push via Event Grid" bypass.
 
 Bootstrap exception:
 If the app is still running the seeded fallback image, the target workload repository does not exist yet in ACR (or the catalog is still empty), and the only confirmed write event is the initial bootstrap create/update, classify the app as BOOTSTRAP / NOT YET EVALUABLE. Do not treat that state as NON-COMPLIANT.
+
+For this demo, that bootstrap create/update may appear as a user principal or Azure CLI caller because `azd up` provisions the initial Container App directly before any compliant workload image exists. If the current revision still matches the seeded fallback image and the workload repository is absent from ACR, bootstrap evidence overrides the caller classification.
 
 If that bootstrap revision is Unhealthy or Degraded only because the seeded sample image listens on port 80 while the Container App target port is 8080, that is expected demo bootstrap behavior and not a compliance violation by itself.
 
