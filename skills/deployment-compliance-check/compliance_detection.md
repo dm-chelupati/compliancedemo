@@ -2,24 +2,31 @@
 
 ## Decision Flow
 
-For each Container App deployment event (Microsoft.App/containerApps/write):
+For each Container App deployment event (`Microsoft.App/containerApps/write`), classify the app into exactly one of these outcomes: **COMPLIANT**, **NON-COMPLIANT**, **BOOTSTRAP / NOT YET EVALUABLE**, or **BLOCKED / UNABLE TO EVALUATE**.
+
+### 0. Confirm the evidence source
+
+Start with Log Analytics `AzureActivity`. If it returns zero rows for the expected time window, fall back to ARM Activity Log evidence before classifying the result. If neither path is available, return **BLOCKED / UNABLE TO EVALUATE** with the exact error evidence.
 
 ### 1. Classify the caller
 
 Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`).
 
-- appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
-- appid `04b07795-a710-4e84-bea4-c697bab44963` → Azure CLI → **NON-COMPLIANT**
-- appid `1950a258-227b-4e31-a9cf-717495945fc2` → Azure PowerShell → **NON-COMPLIANT**
-- appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` → Visual Studio → **NON-COMPLIANT**
-- appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` → Azure Mobile App → **NON-COMPLIANT**
-- Caller contains `@` → User principal → **NON-COMPLIANT**
-- Known pipeline managed identity → **go to step 2**
-- Unknown service principal → **go to step 2**
+- appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` -> Azure Portal -> **NON-COMPLIANT**
+- appid `04b07795-a710-4e84-bea4-c697bab44963` -> Azure CLI -> **NON-COMPLIANT**
+- appid `04b07795-8ddb-461a-bbee-02f9e1bf7b46` -> Azure CLI (observed in ARM Activity Log fallback for this demo) -> **NON-COMPLIANT**
+- appid `1950a258-227b-4e31-a9cf-717495945fc2` -> Azure PowerShell -> **NON-COMPLIANT**
+- appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` -> Visual Studio -> **NON-COMPLIANT**
+- appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` -> Azure Mobile App -> **NON-COMPLIANT**
+- Caller contains `@` -> User principal -> **NON-COMPLIANT**
+- Known pipeline managed identity -> **go to step 2**
+- Unknown service principal -> **go to step 2** and keep the result under investigation unless the image proves non-compliant
+
+When using ARM Activity Log fallback instead of Log Analytics, preserve the raw `claims.appid` value in the report. This demo has already produced the `04b07795-8ddb-461a-bbee-02f9e1bf7b46` Azure CLI variant during bootstrap provisioning.
 
 ### 2. Verify Docker image labels (the tamper-proof check)
 
-Even if the caller is the pipeline's managed identity, verify that the running image was actually built by GitHub Actions. Get the current image tag from the Container App, then retrieve the image config from ACR and look for these labels:
+Even if the caller is the pipeline's managed identity, verify that the running image was actually built by GitHub Actions. Get the current image reference from the Container App, then retrieve the image config from ACR and look for these labels:
 
 - `deployed-by` = `pipeline`
 - `commit-sha` = valid 40-char hex SHA
@@ -28,13 +35,29 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 - `repository` = should match the expected repo
 - `workflow` = should match the expected workflow name
 
-**All labels present** + known pipeline caller → **COMPLIANT**
-**All labels present** + unknown caller → **INVESTIGATE**
-**Any labels missing** → **NON-COMPLIANT** (image was not built by the pipeline)
+If `az acr` or ARM `listCredentials` is unavailable to the agent, use the registry OAuth exchange flow with the agent managed identity: request a token for `https://containerregistry.azure.net/.default`, exchange it at `https://<registry>/oauth2/exchange`, mint a repository-scoped token at `https://<registry>/oauth2/token`, then query `/acr/v1/_catalog` and `/acr/v1/<repo>/_tags` directly.
 
-This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
+**All labels present** + known pipeline caller -> **COMPLIANT**
+**All labels present** + unknown caller -> **INVESTIGATE**
+**Any labels missing** -> **NON-COMPLIANT** (image was not built by the pipeline)
 
-### 3. Check resource tags (secondary confirmation)
+This catches the portal-push bypass: someone pushes an image to ACR manually -> Event Grid fires -> Automation deploys it -> caller and tags look fine, but image labels are missing because GitHub Actions did not build it.
+
+### 3. Bootstrap exception
+
+Return **BOOTSTRAP / NOT YET EVALUABLE** when all of the following are true:
+
+- The app is still running the seeded fallback image rather than a workload image from the target ACR repository
+- The target ACR repository does not exist yet, returns `NAME_UNKNOWN`, or the ACR catalog is still empty (including an ACR catalog response of `{"repositories": null}`)
+- The only confirmed write event is the initial bootstrap create/update rather than a later rollout
+
+For this demo, that initial bootstrap create/update can be emitted by `azd up` as a user principal or Azure CLI caller. If the current revision still uses the seeded fallback image and the workload repository is absent from ACR, classify the result as **BOOTSTRAP / NOT YET EVALUABLE** instead of **NON-COMPLIANT** even when the caller would otherwise fail the policy check.
+
+During that bootstrap window, a degraded revision with a message like `TargetPort 8080 does not match the listening port 80.` is expected for this demo because the seeded sample image listens on port 80. Do not classify that condition alone as **NON-COMPLIANT**.
+
+A zero-row Log Analytics result during bootstrap can still be consistent with **BOOTSTRAP / NOT YET EVALUABLE** if ARM Activity Log fallback and ACR evidence line up with the initial deployment state.
+
+### 4. Check resource tags (secondary confirmation)
 
 Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because the Automation Runbook stamps them on every deploy regardless of how the image got into ACR. Tags alone cannot distinguish a legitimate pipeline deploy from a portal-push-via-Event-Grid deploy.
 
@@ -46,6 +69,7 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI (ARM fallback variant observed during bootstrap) |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
@@ -57,12 +81,12 @@ AzureActivity
 | where TimeGenerated > ago(##timeRange##)
 | where OperationNameValue has "Microsoft.App/containerApps/write"
 | where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
+| where ResourceGroup =~ "##resourceGroup##"
 | extend ClaimsObj = parse_json(Claims)
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"
@@ -72,7 +96,7 @@ AzureActivity
 | order by TimeGenerated desc
 ```
 
-Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
+Set `##timeRange##` based on context (30m, 1h, 4h, 24h) and replace `##resourceGroup##` with the active deployment resource group.
 
 Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
 
