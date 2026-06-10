@@ -51,6 +51,8 @@ Query the AzureActivity table for Container App write operations. Extract claims
 
 If Log Analytics returns zero rows, do not assume compliance or non-compliance. Fall back to ARM Activity Log evidence for the same time window before classifying the result.
 
+For the ARM fallback, query the subscription Activity Log with a supported server-side filter such as event time and resource group, then filter the returned records client-side for `Microsoft.App/containerApps/write` and the target Container App resource URI. Do not rely on `operationName/value` as a server-side filter because that property is not supported by the management events endpoint.
+
 Step 2: Classify each deployment by caller
 Well-known Azure Portal / CLI / PowerShell app IDs -> NON-COMPLIANT
 Caller contains @ (user principal) -> NON-COMPLIANT
@@ -96,9 +98,10 @@ For scheduled scans, report the violation and recommended rollback path, but def
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
-claims.appid values for Portal/CLI/PowerShell are well-known Microsoft constants (see compliance_detection.md)
+claims.appid values for Portal/CLI/PowerShell are well-known Microsoft constants (see compliance_detection.md); for this demo, Azure CLI writes were observed with app id `04b07795-8ddb-461a-bbee-02f9e1bf7b46`
 Caller identity is authoritative; tags can be stale from previous deploys
 Docker image labels are the strongest signal - immutable once pushed
 The "portal push" attack path: manual ACR push -> Event Grid -> Automation -> looks compliant but image labels are missing
 A zero-row Log Analytics result during bootstrap can be a monitoring gap; confirm with ARM Activity Log and ACR state before classifying
+An ACR catalog response with `"repositories": null` should be treated as an empty catalog for bootstrap evaluation
 Never revert without user approval
