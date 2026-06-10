@@ -73,7 +73,7 @@ AzureActivity
 | where TimeGenerated > ago(##timeRange##)
 | where OperationNameValue has "Microsoft.App/containerApps/write"
 | where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
+| where ResourceGroup =~ "##resourceGroup##"
 | extend ClaimsObj = parse_json(Claims)
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
@@ -88,7 +88,7 @@ AzureActivity
 | order by TimeGenerated desc
 ```
 
-Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
+Set `##timeRange##` based on context (30m, 1h, 4h, 24h) and replace `##resourceGroup##` with the active deployment resource group.
 
 Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
 

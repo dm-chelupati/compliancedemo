@@ -26,9 +26,11 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+To discover the workspace ID if needed, resolve the compliance workspace dynamically from the current resource group rather than assuming a fixed environment name. Example:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az resource list --resource-group <resource-group> --resource-type "Microsoft.OperationalInsights/workspaces" --query "[?starts_with(name, 'law-compliance-')].name | [0]" -o tsv
+az monitor log-analytics workspace show --resource-group <resource-group> --workspace-name <resolved-workspace-name> --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 

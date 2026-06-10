@@ -11,7 +11,7 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
 2. **SRE Agent investigates** → Queries Log Analytics first, then falls back to ARM Activity Log if ingestion is delayed
-3. **Classifies** → Portal app ID `c44b4083...`, Azure CLI app ID `04b07795-8ddb-461a-bbee-02f9e1bf7b46`, or any user principal caller = non-compliant
+3. **Classifies** → Portal app ID `c44b4083...`, Azure CLI app ID `04b07795-a710-4e84-bea4-c697bab44963`, or any user principal caller = non-compliant
 4. **Verifies image labels** → Missing immutable pipeline labels in ACR is non-compliant even if the deployer looks automated, unless the app is still in the initial bootstrap state
 5. **For non-compliant interactive investigations** → Activates approval hook, recommends revert to previous revision
 6. **For non-compliant scheduled scans** → Reports the violation and recommended rollback, but defers remediation until an interactive approval step is available
@@ -89,7 +89,7 @@ During that bootstrap window, the only revision can also appear `Unhealthy` / `D
 
 If the compliance Log Analytics workspace returns zero rows during that bootstrap window, but ARM Activity Log fallback shows only the initial `Microsoft.App/containerApps/write` create/update event and the target ACR catalog is still empty (including `{"repositories": null}`), keep the app classified as `BOOTSTRAP / NOT YET EVALUABLE`. That is a historical monitoring-gap case for the bootstrap event, not a deployment-policy violation.
 
-The current repository build workflow pushes images to ACR only. A separate rollout step must update the Container App to a newly pushed image before the deployment can be evaluated as compliant or non-compliant beyond bootstrap.
+Once the first approved workflow run pushes a workload image to ACR, Event Grid plus the Automation runbook should roll the Container App forward automatically. If the ACR repository contains a workload image but the app remains on the seeded fallback revision, treat that as an investigation path rather than bootstrap and collect both Activity Log and revision evidence before deciding whether remediation is required.
 
 If Azure discovery is unavailable during a scheduled scan, the agent should report `BLOCKED / UNABLE TO EVALUATE` with the exact error evidence and avoid remediation based on partial data.
 
