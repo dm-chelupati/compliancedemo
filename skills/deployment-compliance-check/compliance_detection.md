@@ -14,12 +14,15 @@ Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` -> Azure Portal -> **NON-COMPLIANT**
 - appid `04b07795-a710-4e84-bea4-c697bab44963` -> Azure CLI -> **NON-COMPLIANT**
+- appid `04b07795-8ddb-461a-bbee-02f9e1bf7b46` -> Azure CLI (observed in ARM Activity Log fallback for this demo) -> **NON-COMPLIANT**
 - appid `1950a258-227b-4e31-a9cf-717495945fc2` -> Azure PowerShell -> **NON-COMPLIANT**
 - appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` -> Visual Studio -> **NON-COMPLIANT**
 - appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` -> Azure Mobile App -> **NON-COMPLIANT**
 - Caller contains `@` -> User principal -> **NON-COMPLIANT**
 - Known pipeline managed identity -> **go to step 2**
 - Unknown service principal -> **go to step 2** and keep the result under investigation unless the image proves non-compliant
+
+When using ARM Activity Log fallback instead of Log Analytics, preserve the raw `claims.appid` value in the report. This demo has already produced the `04b07795-8ddb-461a-bbee-02f9e1bf7b46` Azure CLI variant during bootstrap provisioning.
 
 ### 2. Verify Docker image labels (the tamper-proof check)
 
@@ -45,7 +48,7 @@ This catches the portal-push bypass: someone pushes an image to ACR manually -> 
 Return **BOOTSTRAP / NOT YET EVALUABLE** when all of the following are true:
 
 - The app is still running the seeded fallback image rather than a workload image from the target ACR repository
-- The target ACR repository does not exist yet, returns `NAME_UNKNOWN`, or the ACR catalog is still empty
+- The target ACR repository does not exist yet, returns `NAME_UNKNOWN`, or the ACR catalog is still empty (including an ACR catalog response of `{"repositories": null}`)
 - The only confirmed write event is the initial bootstrap create/update rather than a later rollout
 
 For this demo, that initial bootstrap create/update can be emitted by `azd up` as a user principal or Azure CLI caller. If the current revision still uses the seeded fallback image and the workload repository is absent from ACR, classify the result as **BOOTSTRAP / NOT YET EVALUABLE** instead of **NON-COMPLIANT** even when the caller would otherwise fail the policy check.
@@ -66,6 +69,7 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI (ARM fallback variant observed during bootstrap) |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
@@ -82,7 +86,7 @@ AzureActivity
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"

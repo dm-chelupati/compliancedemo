@@ -11,7 +11,7 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
 2. **SRE Agent investigates** → Queries Log Analytics first, then falls back to ARM Activity Log if ingestion is delayed
-3. **Classifies** → Portal app ID `c44b4083...`, Azure CLI app ID `04b07795-a710-4e84-bea4-c697bab44963`, or any user principal caller = non-compliant
+3. **Classifies** → Portal app ID `c44b4083...`, Azure CLI app IDs `04b07795-a710-4e84-bea4-c697bab44963` or `04b07795-8ddb-461a-bbee-02f9e1bf7b46`, or any user principal caller = non-compliant unless the bootstrap exception applies
 4. **Verifies image labels** → Missing immutable pipeline labels in ACR is non-compliant even if the deployer looks automated, unless the app is still in the initial bootstrap state
 5. **For non-compliant interactive investigations** → Activates approval hook, recommends revert to previous revision
 6. **For non-compliant scheduled scans** → Reports the violation and recommended rollback, but defers remediation until an interactive approval step is available
@@ -88,6 +88,8 @@ After provisioning, the Container App initially runs the seeded fallback image u
 During that bootstrap window, the only revision can also appear `Unhealthy` / `Degraded` because the seeded sample image listens on port `80` while the Container App ingress targets port `8080`. A status message such as `TargetPort 8080 does not match the listening port 80.` is expected bootstrap behavior for this demo and is not, by itself, a compliance violation.
 
 If the compliance Log Analytics workspace returns zero rows during that bootstrap window, but ARM Activity Log fallback shows only the initial `Microsoft.App/containerApps/write` create/update event and the target ACR catalog is still empty (including `{"repositories": null}`), keep the app classified as `BOOTSTRAP / NOT YET EVALUABLE`. That is a historical monitoring-gap case for the bootstrap event, not a deployment-policy violation.
+
+In this demo, ARM fallback can surface that bootstrap write with Azure CLI app ID `04b07795-8ddb-461a-bbee-02f9e1bf7b46` while the caller is still the human provisioner account. Treat that variant the same as the older Azure CLI app ID for classification purposes, then let the bootstrap exception override the caller result when the seeded image and empty ACR evidence line up.
 
 Once the first approved workflow run pushes a workload image to ACR, Event Grid plus the Automation runbook should roll the Container App forward automatically. If the ACR repository contains a workload image but the app remains on the seeded fallback revision, treat that as an investigation path rather than bootstrap and collect both Activity Log and revision evidence before deciding whether remediation is required.
 
