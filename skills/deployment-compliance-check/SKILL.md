@@ -84,6 +84,8 @@ Compliant pipelines stamp tags like `deployed-by=pipeline`, `pipeline-run-id`, `
 Step 5: Handle incomplete platform access
 If Azure discovery or query tooling is unavailable and you cannot recover enough evidence from alternate read paths, report BLOCKED / UNABLE TO EVALUATE with the exact error evidence. Never remediate based on partial data.
 
+Treat the scan as blocked when the built-in Azure read path fails with a generic platform error (for example `Unknown error occurred.` together with required ARM scopes) and the execution shell cannot supply an alternate Azure client path (for example `bash: az: command not found`). Record both signals in the report so the next operator can distinguish an access/runtime problem from a compliance violation.
+
 Step 6: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant/bootstrap/blocked counts, image label check results, and the evidence used for every non-compliant or non-evaluable classification.
 

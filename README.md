@@ -95,6 +95,8 @@ Once the first approved workflow run pushes a workload image to ACR, Event Grid 
 
 If Azure discovery is unavailable during a scheduled scan, the agent should report `BLOCKED / UNABLE TO EVALUATE` with the exact error evidence and avoid remediation based on partial data.
 
+A concrete blocked example for this demo is: the built-in Azure read path returns a generic `Unknown error occurred.` response that only lists required ARM scopes, while the execution shell cannot provide a fallback because `az` is not installed (`bash: az: command not found`). In that case, treat the issue as runtime/access blockage rather than a deployment-policy violation.
+
 ### GitHub Secrets & Variables
 
 | Type | Name | Value |
