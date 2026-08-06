@@ -20,7 +20,9 @@ Non-compliant deployments should be flagged, reported, and reverted (with user a
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
 How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+GitHub Actions builds the Docker image with immutable compliance labels and pushes it to ACR. Some environments also provision a follow-on deployer (for example Event Grid plus Automation) that updates the Container App via ARM, but that path is not guaranteed to exist. Always verify the live resource group before assuming a push to ACR updates the app.
+
+If the resource group has no deployer, treat a Container App that is still on the placeholder bootstrap image with `commit-sha=initial`, `pipeline-run-id=initial`, no ACR repositories, and no successful `Microsoft.App/containerApps/write` events as `NON-COMPLIANT BOOTSTRAP`. That state is report-only until a real deployment path or compliant image exists.
 
 Data Sources
 Activity Logs in Log Analytics
@@ -49,7 +51,7 @@ Unknown service principal → INVESTIGATE
 Caller identity ALWAYS takes precedence over tags.
 
 Step 3: Verify Docker image labels (the tamper-proof check)
-This is the most important step. Even if the caller is the pipeline's managed identity, the image itself might have been pushed to ACR manually (bypassing the CI/CD build). When that happens, Event Grid still fires, the Automation Runbook still deploys it, and the Activity Log looks legitimate — but the image was never built by GitHub Actions.
+This is the most important step. Even if the caller is the pipeline's managed identity, the image itself might have been pushed to ACR manually (bypassing the CI/CD build). In environments with an Azure-side deployer, that can still lead to a seemingly legitimate Container App write even though the image was never built by GitHub Actions.
 
 To catch this:
 

@@ -21,7 +21,7 @@ GitHub Actions (push to main)
     ↓
 Build Docker image → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Optional follow-on deployer updates the Container App
     ↓
 Activity Log: containerApps/write
     ↓                          ↓
@@ -35,6 +35,8 @@ Compliant? ──yes──► Close alert
     ↓ no
 Activate approval hook → Wait for user → Revert revision
 ```
+
+The workflow in this repo builds and pushes images. Verify that your environment also provisions a deployment step from ACR to the Container App. If the app is still on the placeholder image with `commit-sha=initial`, `pipeline-run-id=initial`, no ACR repositories, and no successful `Microsoft.App/containerApps/write` events, treat that as `NON-COMPLIANT BOOTSTRAP` rather than a revert candidate.
 
 ## Deployed Resources
 
