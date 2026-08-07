@@ -26,9 +26,11 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the Activity Log workspace from the subscription diagnostic setting rather than guessing from workspace names:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -42,7 +44,7 @@ Step 1: Query Activity Logs
 Query the AzureActivity table for Container App write operations. Extract claims.appid and Caller to identify who made the deployment. See compliance_detection.md for the KQL template.
 
 Step 2: Classify each deployment by caller
-Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT
+Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT. Treat both observed Azure CLI app IDs as non-compliant: `04b07795-a710-4e84-bea4-c697bab44963` and `04b07795-8ddb-461a-bbee-02f9e1bf7b46`.
 Caller contains @ (user principal) → NON-COMPLIANT
 Known pipeline managed identity → proceed to Step 3
 Unknown service principal → INVESTIGATE
@@ -70,6 +72,8 @@ IMPORTANT: Always get user approval before any revert action.
 Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
 
 Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+
+Bootstrap-only condition — If the app has only one active revision, runs a placeholder or public image, has bootstrap values such as `commit-sha=initial`, and the configured ACR contains no compliant application image, report `NON-COMPLIANT BOOTSTRAP`. Do not change traffic or revisions: there is no verified rollback target. Remediation is blocked until a compliant pipeline image and deployment path exist.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
