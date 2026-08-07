@@ -4,36 +4,47 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: A CI-built image with immutable pipeline labels is deployed by an approved noninteractive identity.
+- **Non-compliant**: Portal, interactive CLI, or PowerShell writes; images with missing CI labels; and placeholder bootstrap images without a good rollback target.
 
 When a Container App deployment is detected:
-1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+1. **Alert fires** -> Activity Log alert on `Microsoft.App/containerApps/write`.
+2. **SRE Agent investigates** -> Checks the caller, immutable image labels, and resource tags.
+3. **Classifies** -> A known user or CLI caller is non-compliant; labels and caller must both validate for compliance.
+4. **For a rollback candidate** -> The approval hook requires explicit confirmation before traffic or revision changes.
+5. **For bootstrap drift** -> Reports the missing or broken deployment path; it does not attempt a rollback without a compliant image or prior revision.
 
 ## Architecture
 
 ```
 GitHub Actions (push to main)
-    ↓
-Build Docker image → Push to ACR
-    ↓
-az containerapp update (with compliance tags)
-    ↓
+    |
+    v
+Build labeled Docker image -> Push to ACR
+    |
+    v
+Separately provisioned deployment mechanism updates Container App
+    |
+    v
 Activity Log: containerApps/write
-    ↓                          ↓
+    |                          |
+    v                          v
 Alert Rule fires          Scheduled Task (every 30 min)
-    ↓                          ↓
-SRE Agent Response Plan   SRE Agent Compliance Scan
-    ↓
-deployment-compliance-check skill (KQL queries)
-    ↓
-Compliant? ──yes──► Close alert
-    ↓ no
-Activate approval hook → Wait for user → Revert revision
+    |                          |
+    +------------+-------------+
+                 v
+   deployment-compliance-check skill
+                 |
+     +-----------+------------+
+     |                        |
+     v                        v
+Compliant                 Non-compliant
+                             |
+              +--------------+--------------+
+              |                             |
+              v                             v
+  Verified rollback target           Bootstrap-only drift
+  Approval hook before action        Report deployment-path repair
 ```
 
 ## Deployed Resources
@@ -63,13 +74,11 @@ azd provision
 # 2. Configure SRE Agent (connectors, skill, hook, response plan, scheduled task)
 bash scripts/post-deploy.sh
 
-# 3. Create service principal for GitHub Actions (run in Azure Portal Cloud Shell)
-az ad sp create-for-rbac --name "compliancedemo-deploy" \
-  --role Contributor \
-  --scopes "/subscriptions/<SUB_ID>/resourceGroups/rg-compliancedemo" \
-  --json-auth
+# 3. Provision a separate deployment mechanism that updates the Container App
+#    after a labeled image is pushed. Its managed identity or service principal
+#    must be the approved Activity Log caller.
 
-# 4. Add GitHub secrets (see below)
+# 4. Add GitHub secrets and the ACR_NAME repository variable (see below)
 
 # 5. Authorize GitHub connector
 #    Open the OAuth URL printed by post-deploy.sh in your browser
