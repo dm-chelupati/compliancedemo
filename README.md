@@ -4,15 +4,15 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: A Container App write from the approved pipeline identity using an image with valid immutable pipeline labels.
+- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI, or images without the required labels.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL, Activity Log, ACR, and revision history.
+3. **Classifies** → Caller identity is authoritative; immutable image labels confirm the image came from the pipeline.
+4. **For non-compliant** → Activates the approval hook before any change. If no compliant image or prior revision exists, reports `NON-COMPLIANT BOOTSTRAP` without rollback.
+5. **For compliant** → Confirms the deployment.
 
 ## Architecture
 
@@ -21,20 +21,22 @@ GitHub Actions (push to main)
     ↓
 Build Docker image → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Separate deployment mechanism (must be provisioned and validated)
     ↓
-Activity Log: containerApps/write
+Container App update → Activity Log: containerApps/write
     ↓                          ↓
 Alert Rule fires          Scheduled Task (every 30 min)
     ↓                          ↓
 SRE Agent Response Plan   SRE Agent Compliance Scan
     ↓
-deployment-compliance-check skill (KQL queries)
+deployment-compliance-check skill (KQL, Activity Log, ACR, revisions)
     ↓
-Compliant? ──yes──► Close alert
+Compliant? ──yes──► Confirm deployment
     ↓ no
-Activate approval hook → Wait for user → Revert revision
+Approval hook → Revert only when a known-good target exists
 ```
+
+> **Important:** The Bicep currently provisions a placeholder Container App, but not an Event Grid/Automation deployment path. The checked-in workflow builds and pushes an image only. Provision and validate a deployment mechanism before treating a pushed image as deployed.
 
 ## Deployed Resources
 
@@ -62,16 +64,14 @@ azd provision
 
 # 2. Configure SRE Agent (connectors, skill, hook, response plan, scheduled task)
 bash scripts/post-deploy.sh
+# Run this again after editing skills/ or hooks/ to sync their contents to the live agent.
 
-# 3. Create service principal for GitHub Actions (run in Azure Portal Cloud Shell)
-az ad sp create-for-rbac --name "compliancedemo-deploy" \
-  --role Contributor \
-  --scopes "/subscriptions/<SUB_ID>/resourceGroups/rg-compliancedemo" \
-  --json-auth
+# 3. Add GitHub repository secrets and variables (see below)
 
-# 4. Add GitHub secrets (see below)
+# 4. Provision and validate a Container App deployment mechanism.
+# The checked-in workflow builds and pushes an image only; it does not update the app.
 
-# 5. Authorize GitHub connector
+# 5. Authorize the GitHub connector
 #    Open the OAuth URL printed by post-deploy.sh in your browser
 ```
 
@@ -81,13 +81,14 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 |------|------|-------|
 | Secret | `ACR_USERNAME` | ACR admin username |
 | Secret | `ACR_PASSWORD` | ACR admin password |
-| Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth` |
-| Variable | `ACR_NAME` | ACR name (without `.azurecr.io`) |
+| Variable | `ACR_NAME` | Target ACR name (without `.azurecr.io`) |
+| Optional secret | `AZURE_CREDENTIALS` | Required only if a direct Azure deployment stage is added |
 
 ## Testing Compliance
 
 ```bash
-# Compliant deployment — push a code change via PR/merge
+# Build-and-push test. This becomes a compliant deployment only after a
+# separately provisioned deployment mechanism updates the Container App.
 echo "// test" >> src/api/server.js
 git add . && git commit -m "test deployment" && git push
 
