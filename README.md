@@ -71,9 +71,19 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 
 # 4. Add GitHub secrets (see below)
 
-# 5. Authorize GitHub connector
-#    Open the OAuth URL printed by post-deploy.sh in your browser
+# 5. Authorize GitHub connector.
+#    Open the OAuth URL printed by post-deploy.sh in your browser.
+
+# 6. Configure the installed compliance policy with the service principal client ID.
+CICD_SP_CLIENT_ID="<clientId from the service-principal JSON>" bash scripts/post-deploy.sh
+
+# 7. Re-run the previous command after changing files under skills/ or hooks/.
+#    The agent executes the installed configuration, not the repository copy.
 ```
+
+`post-deploy.sh` also recreates the compliance scheduled task, so its prompt and the
+installed skill and hook stay aligned with the repository. Verify the agent configuration
+after the command completes before relying on a changed compliance policy.
 
 ### GitHub Secrets & Variables
 
