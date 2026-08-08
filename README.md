@@ -4,36 +4,31 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: A GitHub Actions deployment by the approved noninteractive identity of an immutable image digest with valid pipeline labels.
+- **Non-compliant**: A deployment by Azure Portal, interactive CLI, PowerShell, a user principal, or an image missing required immutable labels.
+- **Non-compliant bootstrap**: A placeholder image with bootstrap tags, no compliant ACR image, and no prior compliant revision. This is reported but never rolled back.
 
 When a Container App deployment is detected:
-1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+1. **Alert fires** -> Activity Log alert on `Microsoft.App/containerApps/write`
+2. **SRE Agent investigates** -> Checks caller evidence, immutable image labels, and tags
+3. **Classifies** -> Applies the signal-priority decision tree
+4. **For a revertable violation** -> Uses the approval hook before proposing a known-good revision
+5. **For bootstrap-only state** -> Reports that a compliant pipeline deployment is required
 
 ## Architecture
 
 ```
 GitHub Actions (push to main)
-    ↓
-Build Docker image → Push to ACR
-    ↓
-az containerapp update (with compliance tags)
-    ↓
+    |
+Build labeled image -> Push to ACR -> Direct digest deployment to Container App
+    |
 Activity Log: containerApps/write
-    ↓                          ↓
-Alert Rule fires          Scheduled Task (every 30 min)
-    ↓                          ↓
-SRE Agent Response Plan   SRE Agent Compliance Scan
-    ↓
-deployment-compliance-check skill (KQL queries)
-    ↓
-Compliant? ──yes──► Close alert
-    ↓ no
-Activate approval hook → Wait for user → Revert revision
+    |                         |
+Alert Rule fires         Scheduled Task (every 30 min)
+    |                         |
+SRE Agent Response Plan  SRE Agent Compliance Scan
+    |
+Caller + image labels + tags -> classify -> approval-gated rollback when eligible
 ```
 
 ## Deployed Resources
@@ -81,8 +76,12 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 |------|------|-------|
 | Secret | `ACR_USERNAME` | ACR admin username |
 | Secret | `ACR_PASSWORD` | ACR admin password |
-| Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth` |
+| Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth`; the identity needs permission to update the Container App |
 | Variable | `ACR_NAME` | ACR name (without `.azurecr.io`) |
+| Variable | `AZURE_RESOURCE_GROUP` | Resource group output by `azd provision` |
+| Variable | `CONTAINER_APP_NAME` | Container App name output by `azd provision` |
+
+The workflow pushes the SHA-tagged image, deploys its resolved digest, validates `/health`, and then stamps compliance tags.
 
 ## Testing Compliance
 
