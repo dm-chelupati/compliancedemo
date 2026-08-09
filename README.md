@@ -75,6 +75,14 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 #    Open the OAuth URL printed by post-deploy.sh in your browser
 ```
 
+### Resync agent configuration after changes
+
+The installed skill and approval hook are snapshots. After changing files under `skills/` or `hooks/`, rerun the setup script to upload the current policy and recreate the scheduled task:
+
+```bash
+bash scripts/post-deploy.sh
+```
+
 ### GitHub Secrets & Variables
 
 | Type | Name | Value |
