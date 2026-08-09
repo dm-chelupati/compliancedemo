@@ -6,10 +6,11 @@ For each Container App deployment event (Microsoft.App/containerApps/write):
 
 ### 1. Classify the caller
 
-Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`).
+Normalize `Claims` to a string before parsing it (in KQL: `parse_json(tostring(Claims))`), then extract `claims.appid`.
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
 - appid `04b07795-a710-4e84-bea4-c697bab44963` → Azure CLI → **NON-COMPLIANT**
+- appid `04b07795-8ddb-461a-bbee-02f9e1bf7b46` → Azure CLI → **NON-COMPLIANT**
 - appid `1950a258-227b-4e31-a9cf-717495945fc2` → Azure PowerShell → **NON-COMPLIANT**
 - appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` → Visual Studio → **NON-COMPLIANT**
 - appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` → Azure Mobile App → **NON-COMPLIANT**
@@ -34,9 +35,13 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 
 This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
 
-### 3. Check resource tags (secondary confirmation)
+### 3. Handle bootstrap-only deployments
 
-Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because the Automation Runbook stamps them on every deploy regardless of how the image got into ACR. Tags alone cannot distinguish a legitimate pipeline deploy from a portal-push-via-Event-Grid deploy.
+Classify the app as **NON-COMPLIANT BOOTSTRAP** when it has an external placeholder image, bootstrap values such as `commit-sha=initial` or `pipeline-run-id=initial`, no application repository or labeled image in ACR, and no different compliant revision to reactivate. Report this as deployment drift; do not attempt a revert because there is no known-good target.
+
+### 4. Check resource tags (secondary confirmation)
+
+Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because the Automation Runbook stamps them on every deploy regardless of how the Automation Runbook was triggered. Tags alone cannot distinguish a legitimate pipeline deploy from a portal-push-via-Event-Grid deploy.
 
 **Caller identity always takes precedence over tags. Image labels always take precedence over tags.**
 
@@ -46,33 +51,44 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
 
 ## KQL Template
 
+First verify that the selected workspace is ingesting Activity Log data for the target resource group:
+
+```kql
+AzureActivity
+| where ResourceGroup =~ "<resource-group>"
+| summarize totalRows=count(), latestRow=max(TimeGenerated)
+```
+
+Then query Container App writes:
+
 ```kql
 AzureActivity
 | where TimeGenerated > ago(##timeRange##)
-| where OperationNameValue has "Microsoft.App/containerApps/write"
-| where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
-| extend ClaimsObj = parse_json(Claims)
-| extend AppId = tostring(ClaimsObj["appid"])
+| where toupper(OperationNameValue) == "MICROSOFT.APP/CONTAINERAPPS/WRITE"
+| where ActivityStatusValue =~ "Success"
+| where ResourceGroup =~ "<resource-group>"
+| extend ClaimsObj = parse_json(tostring(Claims))
+| extend AppId = tostring(ClaimsObj.appid)
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"
   )
 | extend IsCompliant = (CallerType == "ServicePrincipal")
-| project TimeGenerated, Caller, CallerIpAddress, CallerType, IsCompliant, AppId, Resource, CorrelationId
+| project TimeGenerated, Caller, CallerIpAddress, CallerType, IsCompliant, AppId, ResourceId, CorrelationId
 | order by TimeGenerated desc
 ```
 
-Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
+Set `##timeRange##` based on context (30m, 1h, 4h, 24h). If the workspace is ingesting data but the scoped write query is empty, validate the exact Container App resource with `az monitor activity-log list` before treating the result as no deployment activity.
 
 Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
 
