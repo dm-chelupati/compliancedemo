@@ -92,6 +92,10 @@ bash scripts/post-deploy.sh
 | Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth` |
 | Variable | `ACR_NAME` | ACR name (without `.azurecr.io`) |
 
+### Synchronize Agent Configuration
+
+The deployed agent stores its own copy of the compliance skill and approval hook. After changing files under `skills/` or `hooks/`, rerun `bash scripts/post-deploy.sh` from the provisioned environment. The script reads [hooks/deployment-compliance-approval.yaml](hooks/deployment-compliance-approval.yaml) directly, so the installed hook uses the reviewed prompt, activation mode, and fail-closed settings.
+
 ## Testing Compliance
 
 ```bash

@@ -248,26 +248,70 @@ fi
 # ---- Step 6: Create Approval Hook ----
 echo -e "\n${YELLOW}[6/7] Creating deployment-compliance-approval hook...${NC}"
 
-HOOK_BODY=$(cat <<'EOF'
-{
-  "name": "deployment-compliance-approval",
-  "type": "GlobalHook",
-  "properties": {
-    "eventType": "Stop",
-    "activationMode": "always",
-    "description": "Requires explicit user approval before reverting a non-compliant Container App deployment",
-    "hook": {
-      "type": "prompt",
-      "prompt": "You are a deployment safety reviewer. Check the agent's proposed response for any of these actions:\n\n1. Reverting a Container App to a previous revision\n2. Activating or deactivating a Container App revision\n3. Changing Container App ingress traffic weights\n4. Running az containerapp update, az containerapp revision activate, az containerapp revision deactivate, or az containerapp ingress traffic set\n5. Triggering a GitHub Actions workflow re-run for deployment\n\nIf the agent is about to perform ANY of these actions:\n- REJECT and explain what the agent wants to do\n- Ask the user to reply 'yes' to approve or 'no' to cancel\n\nIf the agent is NOT performing any deployment-modifying action (for example, just reporting compliance status, running queries, or providing information):\n- APPROVE\n\n$ARGUMENTS\n\nRespond with a JSON object:\n- If no deployment action: {\"ok\": true, \"reason\": \"No deployment-modifying action detected\"}\n- If deployment action pending: {\"ok\": false, \"reason\": \"Deployment revert requires approval. The agent wants to [describe action]. Reply 'yes' to approve or 'no' to cancel.\"}",
-      "model": "ReasoningFast",
-      "timeout": 30,
-      "failMode": "Block",
-      "maxRejections": 3
+HOOK_FILE="$DEMO_DIR/hooks/deployment-compliance-approval.yaml"
+if [[ ! -f "$HOOK_FILE" ]]; then
+  echo -e "${RED}ERROR: Approval hook file not found: $HOOK_FILE${NC}"
+  exit 1
+fi
+
+if ! HOOK_BODY=$(HOOK_FILE="$HOOK_FILE" python3 - <<'PY'
+import html
+import json
+import os
+import re
+import sys
+import textwrap
+
+path = os.environ["HOOK_FILE"]
+content = html.unescape(open(path, encoding="utf-8").read())
+
+
+def scalar(key, indent=0):
+    match = re.search(rf"^{' ' * indent}{re.escape(key)}:\s*(\S.*?)\s*$", content, re.MULTILINE)
+    if not match:
+        raise ValueError(f"Missing {key} in {path}")
+    return match.group(1).strip()
+
+
+def block(pattern, name):
+    match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+    if not match:
+        raise ValueError(f"Missing {name} block in {path}")
+    return textwrap.dedent(match.group("value")).strip()
+
+
+try:
+    description = " ".join(
+        block(r"^description:\s*(?:>|&gt;)\s*\n(?P<value>.*?)(?=^\nhook:)", "description").split()
+    )
+    prompt = block(r"^  prompt:\s*\|\s*\n(?P<value>.*?)(?=^  model:)", "prompt")
+    body = {
+        "name": scalar("name"),
+        "type": "GlobalHook",
+        "properties": {
+            "eventType": scalar("event_type"),
+            "activationMode": scalar("activation_mode"),
+            "description": description,
+            "hook": {
+                "type": scalar("type", indent=2),
+                "prompt": prompt,
+                "model": scalar("model", indent=2),
+                "timeout": int(scalar("timeout", indent=2)),
+                "failMode": scalar("fail_mode", indent=2),
+                "maxRejections": int(scalar("max_rejections", indent=2)),
+            },
+        },
     }
-  }
-}
-EOF
-)
+except (OSError, ValueError) as error:
+    print(f"Invalid approval hook configuration: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+print(json.dumps(body))
+PY
+); then
+  echo -e "${RED}ERROR: Could not build the approval hook payload from $HOOK_FILE${NC}"
+  exit 1
+fi
 
 RESULT=$(agent_api PUT "/api/v2/extendedAgent/hooks/deployment-compliance-approval" "$HOOK_BODY"  || echo "FAILED")
 if echo "$RESULT" | grep -q "deployment-compliance-approval" 2>/dev/null; then
