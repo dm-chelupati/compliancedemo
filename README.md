@@ -75,6 +75,14 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 #    Open the OAuth URL printed by post-deploy.sh in your browser
 ```
 
+### Resync agent configuration after changes
+
+The installed skill and approval hook are snapshots. After changing files under `skills/` or `hooks/`, rerun the setup script to upload the current policy and recreate the scheduled task:
+
+```bash
+bash scripts/post-deploy.sh
+```
+
 ### GitHub Secrets & Variables
 
 | Type | Name | Value |
@@ -83,6 +91,10 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 | Secret | `ACR_PASSWORD` | ACR admin password |
 | Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth` |
 | Variable | `ACR_NAME` | ACR name (without `.azurecr.io`) |
+
+### Synchronize Agent Configuration
+
+The deployed agent stores its own copy of the compliance skill and approval hook. After changing files under `skills/` or `hooks/`, rerun `bash scripts/post-deploy.sh` from the provisioned environment. The script reads [hooks/deployment-compliance-approval.yaml](hooks/deployment-compliance-approval.yaml) directly, so the installed hook uses the reviewed prompt, activation mode, and fail-closed settings.
 
 ## Testing Compliance
 
