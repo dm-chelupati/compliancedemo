@@ -26,9 +26,13 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+To discover the workspace ID, resolve the subscription diagnostic setting rather than selecting a workspace by name:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId | [0]" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
+Before interpreting an empty write query, confirm that the workspace has recent AzureActivity rows and that the query is scoped to the correct resource group. If it is ingesting activity but returns no write rows, validate the exact Container App with Azure Activity Log reads.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -62,14 +66,16 @@ Step 4: Verify resource tags (secondary)
 Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
 
 Step 5: Generate compliance report
-Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
+Report should include scan timestamp, time range, total/compliant/non-compliant/bootstrap counts, image label check results, and details of any violations.
 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
 
-Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
+Option A — Reactivate a previous Container App revision only when a different known-good revision exists: list revisions, activate the known-good revision, shift traffic, deactivate the non-compliant revision.
 
-Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+Option B — Re-run the CI/CD pipeline to redeploy a last known compliant image from the approved pipeline.
+
+If the active app has a placeholder/external image, `initial` deployment tags, no labeled application image in ACR, and no different revision, classify it as `NON-COMPLIANT BOOTSTRAP`. Report the drift and do not attempt a revert because no safe target exists.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
