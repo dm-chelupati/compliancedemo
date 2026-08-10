@@ -6,16 +6,18 @@ For each Container App deployment event (Microsoft.App/containerApps/write):
 
 ### 1. Classify the caller
 
-Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`).
+Extract `claims.appid` from Activity Logs (in KQL: `parse_json(tostring(Claims))["appid"]`).
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
-- appid `04b07795-a710-4e84-bea4-c697bab44963` → Azure CLI → **NON-COMPLIANT**
+- appid `04b07795-a710-4e84-bea4-c697bab44963` or `04b07795-8ddb-461a-bbee-02f9e1bf7b46` → Azure CLI → **NON-COMPLIANT**
 - appid `1950a258-227b-4e31-a9cf-717495945fc2` → Azure PowerShell → **NON-COMPLIANT**
 - appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` → Visual Studio → **NON-COMPLIANT**
 - appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` → Azure Mobile App → **NON-COMPLIANT**
 - Caller contains `@` → User principal → **NON-COMPLIANT**
 - Known pipeline managed identity → **go to step 2**
 - Unknown service principal → **go to step 2**
+
+If the Log Analytics query finds no target write, first verify that the workspace has rows for the resource group. Then query the exact Container App resource with `az monitor activity-log list`; a resource-scoped write is authoritative even when AzureActivity has no corresponding row.
 
 ### 2. Verify Docker image labels (the tamper-proof check)
 
@@ -40,12 +42,24 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 
 **Caller identity always takes precedence over tags. Image labels always take precedence over tags.**
 
+### 4. Classify bootstrap-only deployments
+
+Classify the app as **NON-COMPLIANT BOOTSTRAP** when all of the following are true:
+
+- Its only active revision runs a public placeholder image rather than an ACR application image.
+- Bootstrap tags such as `commit-sha=initial` and `pipeline-run-id=initial` remain present.
+- The configured ACR has no application repository or image whose labels can be checked.
+- No prior healthy revision exists to reactivate.
+
+This is a confirmed policy violation but not a safe rollback candidate. Do not activate or deactivate revisions, change traffic, or update the image. Report remediation as blocked until the approved pipeline publishes a compliant image.
+
 ## Well-Known Azure Application IDs
 
 | Application ID | Name |
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
@@ -58,11 +72,11 @@ AzureActivity
 | where OperationNameValue has "Microsoft.App/containerApps/write"
 | where ActivityStatusValue == "Success"
 | where ResourceGroup =~ "rg-compliancedemo"
-| extend ClaimsObj = parse_json(Claims)
+| extend ClaimsObj = parse_json(tostring(Claims))
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"
