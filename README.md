@@ -75,6 +75,8 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 #    Open the OAuth URL printed by post-deploy.sh in your browser
 ```
 
+> Important: `scripts/post-deploy.sh` synchronizes the repository skill, hook, and scheduled-task prompt to the live agent. Rerun it after changing files under `skills/` or `hooks/`, then verify the live configuration before relying on the updated behavior.
+
 ### GitHub Secrets & Variables
 
 | Type | Name | Value |
