@@ -26,9 +26,16 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the workspace from the subscription diagnostic setting before querying, because a resource group can contain multiple workspaces:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+
+Then retrieve the workspace customer ID with `az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv`.
+
+Use a direct resource-scoped Activity Log read as a fallback and corroboration path. A workspace can ingest Administrative records while still not returning the target Container App write in AzureActivity:
+
+az monitor activity-log list --resource-id <container-app-resource-id> --start-time <utc-start> --end-time <utc-end>
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -39,7 +46,7 @@ How to Detect Compliance
 See compliance_detection.md for the detailed decision tree and well-known app IDs.
 
 Step 1: Query Activity Logs
-Query the AzureActivity table for Container App write operations. Extract claims.appid and Caller to identify who made the deployment. See compliance_detection.md for the KQL template.
+Query the AzureActivity table for Container App write operations. Extract claims.appid and Caller to identify who made the deployment. See compliance_detection.md for the KQL template. If no matching AzureActivity rows are returned, confirm that the workspace contains rows for the resource group and query the exact Container App resource through Activity Log before concluding that no deployment occurred.
 
 Step 2: Classify each deployment by caller
 Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT
@@ -63,6 +70,9 @@ Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commi
 
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
+
+Non-Compliant Bootstrap
+Classify an app as `NON-COMPLIANT BOOTSTRAP` when its only active revision runs a public placeholder image, its deployment tags use bootstrap values such as `commit-sha=initial` and `pipeline-run-id=initial`, the configured ACR has no application image to inspect, and no earlier healthy revision exists. This is a deployment gap, not a revert candidate: do not change revisions or traffic. Report remediation as blocked until the approved pipeline publishes a compliant image.
 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
