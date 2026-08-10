@@ -80,7 +80,16 @@ AzureActivity
 
 Set `##timeRange##` based on the scan context, and replace `##resourceGroup##` with the actual resource group.
 
-Before relying on an empty result, run a summary query to verify that the workspace ingests `AzureActivity` rows for the same time range. If the selected workspace has no matching write records, query the exact Container App resource with `az monitor activity-log list` and use that direct event as caller evidence. KQL alone cannot verify image labels; use ACR only when the running image is actually present there.
+Before relying on an empty result, run a summary query to verify that the workspace ingests `AzureActivity` rows for the same time range. Scope the entire summary to the target resource group; global Container App write counts can include unrelated apps and must not be compared with a resource-group-scoped detail query.
+
+```kql
+AzureActivity
+| where TimeGenerated > ago(##timeRange##)
+| where ResourceGroup =~ "##resourceGroup##"
+| summarize totalRows=count(), latestRow=max(TimeGenerated), containerAppWrites=countif(OperationNameValue =~ "MICROSOFT.APP/CONTAINERAPPS/WRITE"), successfulContainerAppWrites=countif(OperationNameValue =~ "MICROSOFT.APP/CONTAINERAPPS/WRITE" and ActivityStatusValue =~ "Success")
+```
+
+If the selected workspace has no matching write records, query the exact Container App resource with `az monitor activity-log list` and use that direct event as caller evidence. KQL alone cannot verify image labels; use ACR only when the running image is actually present there.
 
 ## Signal Priority
 
