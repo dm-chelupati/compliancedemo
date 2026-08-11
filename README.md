@@ -4,14 +4,15 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: A pipeline-managed deployment with approved Activity Log identity and immutable ACR labels: `deployed-by=pipeline`, a 40-character `commit-sha`, and numeric `pipeline-run-id`.
+- **Non-compliant**: Azure Portal, Azure CLI, PowerShell, or user-principal deployments, as identified by `claims.appid` and caller identity.
+- **Non-compliant bootstrap**: A placeholder or external image with no ACR label evidence and no earlier healthy revision. This is reported but not rolled back because no safe target exists.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
+2. **SRE Agent investigates** → Checks Activity Log identity, immutable ACR labels, revision history, and tags
+3. **Classifies** → Approved managed identity plus labels = compliant; Portal, CLI, PowerShell, or a user caller = non-compliant
+4. **For non-compliant** → Requires the approval hook before any rollback; bootstrap-only environments require a new pipeline deployment instead
 5. **For compliant** → Confirms and closes the alert
 
 ## Architecture
@@ -19,9 +20,9 @@ When a Container App deployment is detected:
 ```
 GitHub Actions (push to main)
     ↓
-Build Docker image → Push to ACR
+Build Docker image with immutable labels → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Event Grid → Automation Runbook (managed identity) → Container App update
     ↓
 Activity Log: containerApps/write
     ↓                          ↓
@@ -33,7 +34,7 @@ deployment-compliance-check skill (KQL queries)
     ↓
 Compliant? ──yes──► Close alert
     ↓ no
-Activate approval hook → Wait for user → Revert revision
+Approval hook → verified rollback, or pipeline deployment when bootstrap-only
 ```
 
 ## Deployed Resources
