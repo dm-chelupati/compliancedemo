@@ -74,10 +74,11 @@ AzureActivity
 
 Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
 
-Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
+Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. If no caller event is available from either Log Analytics or direct Activity Log, inspect `systemData`: a `createdBy` or `lastModifiedBy` value containing `@` with the corresponding `*ByType` equal to `User` is non-compliant fallback evidence when its timestamp matches the active revision creation or last modification. It cannot establish CI/CD compliance. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
 
 ## Signal Priority
 
 1. **Caller identity** — who made the ARM call (from Activity Log)
 2. **Docker image labels** — was the image built by the pipeline (from ACR, immutable)
-3. **Resource tags** — what does the Container App say (weakest, can be misleading)
+3. **Timestamp-correlated systemData** — fallback non-compliance evidence only when Activity Log evidence is unavailable
+4. **Resource tags** — what does the Container App say (weakest, can be misleading)

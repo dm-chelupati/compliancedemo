@@ -29,6 +29,9 @@ Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use Q
 To discover the workspace ID if needed:
 
 az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+
+If direct Activity Log evidence is unavailable because of retention or ingestion gaps, inspect the Container App `systemData`. A `createdBy` or `lastModifiedBy` value containing `@` with `createdByType` or `lastModifiedByType` equal to `User` is non-compliant fallback evidence only when its timestamp matches the active revision creation or last modification time. Do not use `systemData` to establish CI/CD compliance; it cannot prove the deployment identity was approved.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
