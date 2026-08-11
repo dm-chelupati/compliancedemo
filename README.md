@@ -4,15 +4,16 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: Deployments made by an approved CI/CD identity using an ACR image with the required immutable pipeline labels
+- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI, deployments with invalid or missing image labels, and unverified external images
+- **Tags are secondary evidence**: `deployed-by`, `commit-sha`, and `pipeline-run-id` tags can be stale and do not independently establish compliance
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+2. **SRE Agent investigates** → Checks Activity Log caller identity, immutable ACR image labels, and resource tags
+3. **Classifies** → An approved deployment identity and valid image labels are both required; Portal, CLI, user-principal, or invalid-image deployments are non-compliant
+4. **For non-compliant** → Identifies a known-good candidate when one exists; any revert requires the approval hook and explicit user approval
+5. **For compliant** → Confirms the evidence and closes the alert
 
 ## Architecture
 
@@ -29,7 +30,7 @@ Alert Rule fires          Scheduled Task (every 30 min)
     ↓                          ↓
 SRE Agent Response Plan   SRE Agent Compliance Scan
     ↓
-deployment-compliance-check skill (KQL queries)
+deployment-compliance-check skill (Activity Log + ACR labels + tags)
     ↓
 Compliant? ──yes──► Close alert
     ↓ no
