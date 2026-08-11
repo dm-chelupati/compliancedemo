@@ -57,12 +57,12 @@ AzureActivity
 | where TimeGenerated > ago(##timeRange##)
 | where OperationNameValue has "Microsoft.App/containerApps/write"
 | where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
-| extend ClaimsObj = parse_json(Claims)
-| extend AppId = tostring(ClaimsObj["appid"])
+| where ResourceGroup =~ "<resource-group>"
+| extend ClaimsObj = parse_json(tostring(Claims))
+| extend AppId = tostring(ClaimsObj.appid)
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"
@@ -74,10 +74,32 @@ AzureActivity
 
 Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
 
-Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
+### Direct Activity Log fallback
+
+If a correctly scoped Log Analytics query has no Container App write, query the exact resource directly before falling back to `systemData`:
+
+```sh
+az monitor activity-log list --resource-id <container-app-resource-id> --offset 90d --subscription <subscription-id> --query "[?operationName.value=='Microsoft.App/containerApps/write' && status.value=='Succeeded'].{time:eventTimestamp,caller:caller,claims:claims,correlationId:correlationId}" -o json
+```
+
+A successful direct event is authoritative caller evidence for that Container App. A zero-row Log Analytics query can reflect diagnostic ingestion or retention gaps and cannot prove no deployment occurred. Parse `claims.appid` from the returned `claims` object using the same caller classification rules.
+
+Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. If no caller event is available from either Log Analytics or direct Activity Log, inspect `systemData`: a `createdBy` or `lastModifiedBy` value containing `@` with the corresponding `*ByType` equal to `User` is non-compliant fallback evidence when its timestamp matches the active revision creation or last modification. It cannot establish CI/CD compliance. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
+
+## Bootstrap-Only Environments
+
+Classify the app as **NON-COMPLIANT BOOTSTRAP** when all of the following apply:
+
+- The active revision uses a placeholder or external image, or the expected ACR repository is absent.
+- No image labels can establish a pipeline build.
+- No earlier healthy revision exists.
+- Activity Log evidence is unavailable, or timestamp-correlated `systemData` identifies a user deployment.
+
+Report the violation and failed revision state, but do not reactivate, deactivate, or retarget traffic. There is no known-good rollback target; the remedy is a new approved pipeline deployment.
 
 ## Signal Priority
 
 1. **Caller identity** — who made the ARM call (from Activity Log)
 2. **Docker image labels** — was the image built by the pipeline (from ACR, immutable)
-3. **Resource tags** — what does the Container App say (weakest, can be misleading)
+3. **Timestamp-correlated systemData** — fallback non-compliance evidence only when Activity Log evidence is unavailable
+4. **Resource tags** — what does the Container App say (weakest, can be misleading)
