@@ -26,9 +26,13 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+To discover the workspace ID, resolve the subscription diagnostic setting rather than guessing from workspace names:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
+If direct Activity Log evidence is unavailable because of retention or ingestion gaps, inspect the Container App `systemData`. A `createdBy` or `lastModifiedBy` value containing `@` with `createdByType` or `lastModifiedByType` equal to `User` is non-compliant fallback evidence only when its timestamp matches the active revision creation or last modification time. Do not use `systemData` to establish CI/CD compliance; it cannot prove the deployment identity was approved.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -67,9 +71,13 @@ Report should include scan timestamp, time range, total/compliant/non-compliant 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
 
+Before selecting a revert path, list revisions and verify an earlier healthy revision or an approved image with valid ACR labels exists.
+
 Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
 
 Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+
+If the Container App has only one failed bootstrap revision, the running image is a placeholder or external image, and no approved image exists in ACR, report `NON-COMPLIANT BOOTSTRAP`. Do not modify the app: there is no safe rollback target. State that a compliant pipeline deployment is required to establish a known-good revision.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
