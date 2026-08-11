@@ -20,15 +20,19 @@ Non-compliant deployments should be flagged, reported, and reverted (with user a
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
 How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+An approved CI/CD pipeline builds the Docker image with immutable compliance labels, pushes it to ACR, and performs the audited Container App update through an approved managed identity or service principal. An Event Grid and Automation handoff is compliant only when that path is actually provisioned and its identity is registered as an approved deployment identity; do not assume that the handoff exists.
 
 Data Sources
 Activity Logs in Log Analytics
-Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
+Activity Logs flow to a Log Analytics workspace through subscription diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+To discover the authoritative workspace ID, first resolve the subscription diagnostic setting and then retrieve its customer ID:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
+Sanity-check that the selected workspace has AzureActivity rows for the scan window before treating an empty filtered query as evidence. If the workspace has no matching Container App write rows, query the exact Container App resource with az monitor activity-log list; Activity Log routing delays or gaps must not hide a known write event.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -49,20 +53,25 @@ Unknown service principal → INVESTIGATE
 Caller identity ALWAYS takes precedence over tags.
 
 Step 3: Verify Docker image labels (the tamper-proof check)
-This is the most important step. Even if the caller is the pipeline's managed identity, the image itself might have been pushed to ACR manually (bypassing the CI/CD build). When that happens, Event Grid still fires, the Automation Runbook still deploys it, and the Activity Log looks legitimate — but the image was never built by GitHub Actions.
+This is the most important step. Even if the caller is the pipeline's managed identity, the image itself might have been pushed to ACR manually (bypassing the CI/CD build). When that happens, an otherwise legitimate deployment mechanism can make the Activity Log look compliant even though the image was never built by GitHub Actions.
 
 To catch this:
 
-Get the currently running image tag from the Container App
-Retrieve the image config from ACR and check for the expected labels (deployed-by=pipeline, commit-sha, pipeline-run-id, etc.)
-If labels are missing or invalid → NON-COMPLIANT regardless of caller
-This closes the "portal push via Event Grid" bypass.
+Get the currently running image tag from the Container App.
+If the image is in the configured ACR, retrieve its image config and check for the expected labels (deployed-by=pipeline, commit-sha, pipeline-run-id, and the expected branch, repository, and workflow).
+If labels are missing or invalid → NON-COMPLIANT regardless of caller.
+If the running image is outside the configured ACR, record the label check as unavailable and classify it as NON-COMPLIANT. If its tags are bootstrap values such as commit-sha=initial and pipeline-run-id=initial, ACR has no application repository, and no previous revision exists, classify it as NON-COMPLIANT BOOTSTRAP. It has no safe rollback candidate.
+
+This closes the "portal push" attack path and prevents an external bootstrap image from being mistaken for a verified pipeline artifact.
 
 Step 4: Verify resource tags (secondary)
 Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
 
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
+
+Scheduled Scan Behavior
+A scheduled scan is detection-only. Never treat the absence of interactive approval as approval, and never mutate revisions, traffic, images, or deployment workflows from the scan. If a known-good revision or compliant image exists, report the exact candidate and require explicit approval before a separately authorized remediation action. If neither exists, report remediation as blocked.
 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
