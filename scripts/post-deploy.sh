@@ -364,7 +364,7 @@ body = {
     'name': 'compliance-scan',
     'description': 'compliance-scan',
     'cronExpression': '*/30 * * * *',
-    'agentPrompt': '''Load the deployment-compliance-check skill and follow it to check whether the latest running image is compliant for all Container Apps in scope. Use hooks before any modification action on a resource. Report findings in the format specified by the skill. Remediate following the skill instructions'''
+    'agentPrompt': '''Load the deployment-compliance-check skill and check whether the latest running image is compliant for all Container Apps in scope. This is a detection-only scheduled scan: do not modify Container Apps, revisions, traffic, images, or deployment workflows. Report findings in the skill format. For a non-compliant deployment, identify the exact known-good candidate if one exists and state that an explicitly approved, separately authorized remediation is required.'''
 }
 with open('/tmp/task-body.json', 'w') as f:
     json.dump(body, f)
