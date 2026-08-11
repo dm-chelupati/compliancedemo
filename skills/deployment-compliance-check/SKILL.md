@@ -26,9 +26,11 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the workspace through the subscription diagnostic setting rather than guessing from a workspace name:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -40,6 +42,12 @@ See compliance_detection.md for the detailed decision tree and well-known app ID
 
 Step 1: Query Activity Logs
 Query the AzureActivity table for Container App write operations. Extract claims.appid and Caller to identify who made the deployment. See compliance_detection.md for the KQL template.
+
+If the selected Log Analytics workspace has scoped AzureActivity rows but no matching Container App write, query the direct Activity Log before treating caller evidence as unavailable:
+
+az monitor activity-log list --resource-id <container-app-resource-id> --offset 90d --subscription <subscription-id> --query "[?operationName.value=='Microsoft.App/containerApps/write' && status.value=='Succeeded'].{time:eventTimestamp,caller:caller,claims:claims,correlationId:correlationId}" -o json
+
+Use a successful direct Activity Log event for the exact Container App as caller-identity evidence. A zero-row Log Analytics query alone can indicate an ingestion or retention gap; it is not proof that no deployment occurred.
 
 Step 2: Classify each deployment by caller
 Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT
@@ -67,9 +75,13 @@ Report should include scan timestamp, time range, total/compliant/non-compliant 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
 
+Before selecting a revert path, list revisions and verify an earlier healthy revision or an approved image with valid ACR labels exists.
+
 Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
 
 Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+
+If the Container App has only one failed bootstrap revision, the running image is a placeholder or external image, and no approved image exists in ACR, report `NON-COMPLIANT BOOTSTRAP`. Do not modify the app: there is no safe rollback target. State that a compliant pipeline deployment is required to establish a known-good revision.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
