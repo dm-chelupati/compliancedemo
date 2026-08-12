@@ -19,16 +19,20 @@ Only service principal / managed identity deployments from the CI/CD pipeline ar
 Non-compliant deployments should be flagged, reported, and reverted (with user approval).
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
-How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+Expected Deployment Pattern
+GitHub Actions builds the Docker image with immutable compliance labels and pushes it to ACR. A separate Azure-side deployment mechanism, such as an Automation Runbook under a managed identity, must update the Container App. A workflow that only pushes an image does not itself deploy the app.
+
+Before classifying a deployment as pipeline-backed, verify the running image's registry, the expected ACR repository, and the deployed component that updates Container Apps. Do not assume Event Grid or an Automation Runbook exists merely because a workflow describes it.
 
 Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+To discover the correct workspace ID, resolve the subscription diagnostic setting first:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -64,12 +68,17 @@ Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commi
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
+Bootstrap-only state
+Classify an app as NON-COMPLIANT BOOTSTRAP when it is still on a placeholder/public bootstrap image, has placeholder tags such as `commit-sha=initial`, has no compliant application image in ACR, and has no prior revision to reactivate. This is not a safe rollback candidate. Report the missing delivery path and image as the remediation prerequisite; do not modify the app.
+
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
 
 Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
 
 Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+
+If neither a prior revision nor a compliant ACR image exists, do not run a revert or redeployment. Report NON-COMPLIANT BOOTSTRAP and require the delivery pipeline to be repaired first.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
