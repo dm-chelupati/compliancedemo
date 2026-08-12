@@ -4,14 +4,15 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: An approved deployment path updates the Container App and the active ACR image has the immutable `deployed-by=pipeline`, `commit-sha`, and `pipeline-run-id` labels.
+- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI, or images that lack the required immutable labels.
+- **Important**: Building and pushing an image alone does not deploy the Container App or establish compliance.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
 2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
+3. **Classifies** → Portal/CLI user callers are non-compliant; service principals still require ACR image-label validation
+4. **For non-compliant** → Activates approval hook, recommends a verified rollback target
 5. **For compliant** → Confirms and closes the alert
 
 ## Architecture
@@ -21,7 +22,10 @@ GitHub Actions (push to main)
     ↓
 Build Docker image → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Approved deployment component
+(workflow deploy job or Event Grid → Automation Runbook)
+    ↓
+Container App revision update
     ↓
 Activity Log: containerApps/write
     ↓                          ↓
@@ -35,6 +39,8 @@ Compliant? ──yes──► Close alert
     ↓ no
 Activate approval hook → Wait for user → Revert revision
 ```
+
+The current infrastructure template provisions neither an Event Grid/Automation deployment component nor a workflow deployment job. Add and validate one before treating ACR pushes as Container App deployments.
 
 ## Deployed Resources
 
@@ -63,13 +69,11 @@ azd provision
 # 2. Configure SRE Agent (connectors, skill, hook, response plan, scheduled task)
 bash scripts/post-deploy.sh
 
-# 3. Create service principal for GitHub Actions (run in Azure Portal Cloud Shell)
-az ad sp create-for-rbac --name "compliancedemo-deploy" \
-  --role Contributor \
-  --scopes "/subscriptions/<SUB_ID>/resourceGroups/rg-compliancedemo" \
-  --json-auth
+# 3. Configure the build workflow secrets and variables below.
 
-# 4. Add GitHub secrets (see below)
+# 4. Add an approved deployment component that updates the Container App
+#    (a workflow deploy job or Event Grid → Automation Runbook), then verify its
+#    managed identity or service principal and RBAC scope.
 
 # 5. Authorize GitHub connector
 #    Open the OAuth URL printed by post-deploy.sh in your browser
@@ -79,10 +83,11 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 
 | Type | Name | Value |
 |------|------|-------|
-| Secret | `ACR_USERNAME` | ACR admin username |
-| Secret | `ACR_PASSWORD` | ACR admin password |
-| Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth` |
-| Variable | `ACR_NAME` | ACR name (without `.azurecr.io`) |
+| Secret | `ACR_USERNAME` | ACR admin username for the build-and-push workflow |
+| Secret | `ACR_PASSWORD` | ACR admin password for the build-and-push workflow |
+| Variable | `ACR_NAME` | Provisioned ACR name (without `.azurecr.io`); reconcile the workflow with this value before enabling it |
+
+If a workflow deploy job is used, configure its Azure identity separately with least-privilege access to the target Container App. The shipped workflow currently only builds and pushes images.
 
 ## Testing Compliance
 
