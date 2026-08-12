@@ -1,21 +1,15 @@
 # ============================================================
-# GitHub Actions — Build & Push to ACR
-# CI/CD pipeline for compliant deployments to Azure Container App.
+# GitHub Actions - Build, push, and deploy to Azure Container Apps
 #
-# How it works:
-# 1. Builds Docker image with immutable compliance labels
-# 2. Pushes to ACR using admin credentials (no Azure AD auth needed)
-# 3. ACR emits Event Grid "ImagePushed" event
-# 4. Event Grid → Automation Runbook → az containerapp update
-#    (runs inside Azure with managed identity — bypasses CAP)
-#
-# Compliance signals (tamper-proof):
-#   - Docker image labels: commit-sha, pipeline-run-id, branch, repo
-#     (immutable once pushed to ACR)
-#   - Activity Log caller: Automation MI (Azure AD enforced)
+# The approved CI/CD service principal performs the Container App update.
+# The workflow builds an immutable SHA-tagged image, pushes it to ACR, and
+# stamps matching deployment tags after the image update succeeds.
 #
 # Required secrets:
-#   ACR_USERNAME / ACR_PASSWORD  — ACR admin credentials
+#   ACR_USERNAME / ACR_PASSWORD - ACR admin credentials for image push
+#   AZURE_CREDENTIALS            - approved CI/CD service principal JSON
+# Required repository variables:
+#   ACR_NAME, RESOURCE_GROUP, CONTAINER_APP_NAME
 # ============================================================
 name: Deploy Container App
 
@@ -31,15 +25,28 @@ permissions:
   contents: read
 
 env:
-  ACR_NAME: acrcompliancedemoenqgb2
+  ACR_NAME: ${{ vars.ACR_NAME }}
   IMAGE_NAME: compliance-demo-api
+  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+  CONTAINER_APP_NAME: ${{ vars.CONTAINER_APP_NAME }}
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        run: |
+          test -n "$ACR_NAME"
+          test -n "$RESOURCE_GROUP"
+          test -n "$CONTAINER_APP_NAME"
+
+      - name: Sign in with the approved CI/CD identity
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Log in to ACR
         run: |
@@ -66,18 +73,30 @@ jobs:
             -t "$LATEST_TAG" \
             src/api/
 
-          # Push SHA-tagged image first (triggers Event Grid → deploy)
           docker push "$SHA_TAG"
-          # Push :latest as well (fallback reference)
           docker push "$LATEST_TAG"
-          echo "✅ Pushed: $SHA_TAG"
-          echo "🔄 Event Grid will trigger deployment automatically"
+          echo "Pushed: $SHA_TAG"
+
+      - name: Deploy immutable image
+        run: |
+          SHA_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          az containerapp update \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$SHA_TAG" \
+            --output none
+
+          APP_ID="$(az containerapp show --name "$CONTAINER_APP_NAME" --resource-group "$RESOURCE_GROUP" --query id --output tsv)"
+          az tag update \
+            --resource-id "$APP_ID" \
+            --operation Merge \
+            --tags "deployed-by=pipeline" "pipeline-run-id=${{ github.run_id }}" "commit-sha=${{ github.sha }}" "branch=${{ github.ref_name }}" "repository=${{ github.repository }}" "workflow=${{ github.workflow }}" \
+            --output none
 
       - name: Summary
         run: |
-          echo "### ✅ Image Pushed to ACR" >> $GITHUB_STEP_SUMMARY
+          echo "### Container App deployed" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deploy**: Automatic via Event Grid → Automation Runbook" >> $GITHUB_STEP_SUMMARY
-          echo "- **App URL**: https://ca-api-compliancedemo.ashypond-ed21e6b9.eastus2.azurecontainerapps.io" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment**: Direct Container App update by the approved CI/CD identity" >> $GITHUB_STEP_SUMMARY

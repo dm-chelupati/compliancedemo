@@ -1,46 +1,14 @@
-#!/bin/bash
-# ============================================================
-# Deploy the latest image from ACR to the Container App
-# Run after GitHub Actions pushes a new image to ACR.
-#
-# Usage:
-#   bash scripts/deploy.sh                    # deploy :latest
-#   bash scripts/deploy.sh <commit-sha>       # deploy specific version
-# ============================================================
+#!/usr/bin/env bash
+# This repository permits Container App deployments only from the approved
+# GitHub Actions workflow. Keeping a local az containerapp update helper would
+# allow callers to bypass the required CI/CD identity and immutable image flow.
 set -euo pipefail
 
-RESOURCE_GROUP="rg-compliancedemo"
-CONTAINER_APP="ca-api-compliancedemo"
-ACR_NAME="acrcompliancedemoenqgb2"
-IMAGE="compliance-demo-api"
+cat >&2 <<'EOF'
+scripts/deploy.sh is retired and intentionally performs no deployment.
 
-# Compliance tags — required for deployment-compliance-check signal 2
-DEPLOYED_BY="pipeline"
-DEPLOYMENT_METHOD="${DEPLOYMENT_METHOD:-script}"
-PIPELINE_RUN_ID="${GITHUB_RUN_ID:-local-$(date +%s)}"
-COMMIT_SHA="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
-
-TAG="${1:-latest}"
-FULL_IMAGE="${ACR_NAME}.azurecr.io/${IMAGE}:${TAG}"
-
-echo "Deploying: $FULL_IMAGE"
-az containerapp update \
-  --name "$CONTAINER_APP" \
-  --resource-group "$RESOURCE_GROUP" \
-  --image "$FULL_IMAGE" \
-  --tags \
-    deployed-by="$DEPLOYED_BY" \
-    deployment-method="$DEPLOYMENT_METHOD" \
-    pipeline-run-id="$PIPELINE_RUN_ID" \
-    commit-sha="$COMMIT_SHA" \
-  --output none
-
-FQDN=$(az containerapp show \
-  --name "$CONTAINER_APP" \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "properties.configuration.ingress.fqdn" -o tsv)
-
-echo "✅ Deployed! App: https://$FQDN"
-sleep 10
-echo "Health check:"
-curl -s "https://$FQDN/health" | python3 -m json.tool
+Use the "Deploy Container App" GitHub Actions workflow on main. It builds the
+SHA-tagged ACR image, stamps the required labels and tags, and updates the
+configured Container App with the approved CI/CD identity.
+EOF
+exit 1
