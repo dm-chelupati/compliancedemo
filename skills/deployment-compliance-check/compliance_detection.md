@@ -76,6 +76,20 @@ Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
 
 Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
 
+## Direct Activity Log Fallback
+
+If the Log Analytics result is empty or delayed, query the exact Container App resource for the most recent 90 days:
+
+```bash
+az monitor activity-log list \
+  --resource-id <container-app-resource-id> \
+  --offset 90d \
+  --query "[?authorization.action=='Microsoft.App/containerApps/write' && status.value=='Succeeded'].{time:eventTimestamp,caller:caller,appId:claims.appid,correlationId:correlationId}" \
+  -o json
+```
+
+A resource-scoped lookup can include child-resource events, such as alert state changes. Filter on `authorization.action` as shown; do not rely on the returned resource ID alone. Azure CLI JMESPath does not support `tolower()`, so use the exact action value in the query.
+
 ## Signal Priority
 
 1. **Caller identity** — who made the ARM call (from Activity Log)
