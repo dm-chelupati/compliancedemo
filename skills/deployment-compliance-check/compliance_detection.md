@@ -17,6 +17,8 @@ Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`
 - Known pipeline managed identity → **go to step 2**
 - Unknown service principal → **go to step 2**
 
+When neither Log Analytics nor the direct Activity Log has a usable event, inspect `systemData` on the current Container App. `lastModifiedByType=User` is **NON-COMPLIANT**. `createdByType=User` is supporting non-compliance evidence only if `createdAt` equals `lastModifiedAt`; otherwise classify the caller as unavailable. Never use a service-principal or managed-identity `systemData` value to prove compliance.
+
 ### 2. Verify Docker image labels (the tamper-proof check)
 
 Even if the caller is the pipeline's managed identity, verify that the running image was actually built by GitHub Actions. Get the current image tag from the Container App, then retrieve the image config from ACR and look for these labels:

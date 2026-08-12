@@ -29,6 +29,10 @@ Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use Q
 To discover the workspace ID if needed:
 
 az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+
+Provenance fallback
+If both the Log Analytics query and direct Activity Log lookup have no usable deployment event, inspect the Container App `systemData`. A `lastModifiedByType` of `User` is non-compliant for the current resource. A `createdByType` of `User` is supporting non-compliance evidence only when `createdAt` equals `lastModifiedAt`; otherwise report the caller as unavailable. A service-principal or managed-identity value in `systemData` never establishes compliance.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
