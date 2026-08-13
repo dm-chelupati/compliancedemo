@@ -1,23 +1,22 @@
 # ============================================================
 # GitHub Actions — Build & Push to ACR
-# CI/CD pipeline for compliant deployments to Azure Container App.
+# CI/CD image-build workflow for the Container App.
 #
-# How it works:
-# 1. Builds Docker image with immutable compliance labels
-# 2. Pushes to ACR using admin credentials (no Azure AD auth needed)
-# 3. ACR emits Event Grid "ImagePushed" event
-# 4. Event Grid → Automation Runbook → az containerapp update
-#    (runs inside Azure with managed identity — bypasses CAP)
+# This workflow builds images with immutable compliance labels and pushes them
+# to ACR. It does not update Container App revisions. Configure and validate a
+# separate approved deployment component before treating an image push as a
+# compliant deployment.
 #
-# Compliance signals (tamper-proof):
-#   - Docker image labels: commit-sha, pipeline-run-id, branch, repo
+# Compliance signal:
+#   - Docker image labels: commit-sha, pipeline-run-id, branch, and repository
 #     (immutable once pushed to ACR)
-#   - Activity Log caller: Automation MI (Azure AD enforced)
 #
 # Required secrets:
 #   ACR_USERNAME / ACR_PASSWORD  — ACR admin credentials
+# Required variable:
+#   ACR_NAME — Target ACR name without .azurecr.io
 # ============================================================
-name: Deploy Container App
+name: Build and Push Container Image
 
 on:
   push:
@@ -31,7 +30,7 @@ permissions:
   contents: read
 
 env:
-  ACR_NAME: acrcompliancedemoenqgb2
+  ACR_NAME: ${{ vars.ACR_NAME }}
   IMAGE_NAME: compliance-demo-api
 
 jobs:
@@ -66,18 +65,16 @@ jobs:
             -t "$LATEST_TAG" \
             src/api/
 
-          # Push SHA-tagged image first (triggers Event Grid → deploy)
+          # Publish immutable and convenience tags. Deployment occurs separately.
           docker push "$SHA_TAG"
-          # Push :latest as well (fallback reference)
           docker push "$LATEST_TAG"
-          echo "✅ Pushed: $SHA_TAG"
-          echo "🔄 Event Grid will trigger deployment automatically"
+          echo "Pushed: $SHA_TAG"
+          echo "A separate approved deployment component must update the Container App."
 
       - name: Summary
         run: |
-          echo "### ✅ Image Pushed to ACR" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Pushed to ACR" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deploy**: Automatic via Event Grid → Automation Runbook" >> $GITHUB_STEP_SUMMARY
-          echo "- **App URL**: https://ca-api-compliancedemo.ashypond-ed21e6b9.eastus2.azurecontainerapps.io" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container App deployment**: Not performed by this workflow" >> $GITHUB_STEP_SUMMARY
