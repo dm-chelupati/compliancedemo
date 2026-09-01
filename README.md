@@ -14,6 +14,8 @@ When a Container App deployment is detected:
 4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
 5. **For compliant** → Confirms and closes the alert
 
+Scheduled scans are detection-only: they report violations and remediation targets, but never modify Container Apps or trigger deployments.
+
 ## Architecture
 
 ```
