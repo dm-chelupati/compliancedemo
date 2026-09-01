@@ -58,6 +58,9 @@ Retrieve the image config from ACR and check for the expected labels (deployed-b
 If labels are missing or invalid → NON-COMPLIANT regardless of caller
 This closes the "portal push via Event Grid" bypass.
 
+Step 3.5: Detect bootstrap-only state
+If the only active revision runs the public bootstrap image, tags use placeholder values such as `commit-sha=initial` and `pipeline-run-id=initial`, the configured ACR has no application repository, and no prior revision exists, classify the app as `NON-COMPLIANT BOOTSTRAP`. This state has no known-good revision or compliant image to reactivate. Record the remediation target as an approved CI/CD deployment of a pipeline-labeled image to the configured ACR; do not recommend a revision revert.
+
 Step 4: Verify resource tags (secondary)
 Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
 
