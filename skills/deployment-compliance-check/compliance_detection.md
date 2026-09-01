@@ -32,11 +32,11 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 **All labels present** + unknown caller → **INVESTIGATE**
 **Any labels missing** → **NON-COMPLIANT** (image was not built by the pipeline)
 
-This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
+This catches a provenance bypass: someone pushes an image to ACR manually, then legitimate automation deploys it. The caller and tags can look valid, but immutable image labels reveal that GitHub Actions did not build the image.
 
 ### 3. Check resource tags (secondary confirmation)
 
-Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because the Automation Runbook stamps them on every deploy regardless of how the image got into ACR. Tags alone cannot distinguish a legitimate pipeline deploy from a portal-push-via-Event-Grid deploy.
+Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because they are mutable resource metadata; this repository's GitHub Actions workflow applies them after deploying the image. Tags alone cannot distinguish a legitimate pipeline deployment from an image whose provenance was bypassed before deployment.
 
 **Caller identity always takes precedence over tags. Image labels always take precedence over tags.**
 
