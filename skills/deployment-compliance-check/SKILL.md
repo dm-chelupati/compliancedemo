@@ -20,7 +20,7 @@ Non-compliant deployments should be flagged, reported, and reverted (with user a
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
 How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+GitHub Actions builds the Docker image with immutable compliance labels, pushes it to ACR, authenticates with the approved CI/CD service principal, and updates the Container App with the immutable commit image. The expected Activity Log caller is therefore the approved CI/CD service principal.
 
 Data Sources
 Activity Logs in Log Analytics
@@ -41,28 +41,33 @@ See compliance_detection.md for the detailed decision tree and well-known app ID
 Step 1: Query Activity Logs
 Query the AzureActivity table for Container App write operations. Extract claims.appid and Caller to identify who made the deployment. See compliance_detection.md for the KQL template.
 
+If Log Analytics returns no matching write for an active revision created within the last 90 days, query the exact Container App resource with `az monitor activity-log list --resource-id <resource-id> --offset 90d`. Direct Activity Log results are authoritative for that exact resource and can contain a write that is absent from the Log Analytics workspace. Do not classify a deployment as bootstrap-only from an empty Log Analytics result until this fallback has been checked.
+
 Step 2: Classify each deployment by caller
 Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT
 Caller contains @ (user principal) → NON-COMPLIANT
-Known pipeline managed identity → proceed to Step 3
+Known CI/CD managed identity or service principal → proceed to Step 3
 Unknown service principal → INVESTIGATE
 Caller identity ALWAYS takes precedence over tags.
 
 Step 3: Verify Docker image labels (the tamper-proof check)
-This is the most important step. Even if the caller is the pipeline's managed identity, the image itself might have been pushed to ACR manually (bypassing the CI/CD build). When that happens, Event Grid still fires, the Automation Runbook still deploys it, and the Activity Log looks legitimate — but the image was never built by GitHub Actions.
+This is the most important step. Even if the caller is the approved CI/CD identity, the image itself might have been pushed to ACR manually and later selected by a trusted deployment process. The Activity Log can look legitimate while the image was never built by GitHub Actions.
 
 To catch this:
 
 Get the currently running image tag from the Container App
 Retrieve the image config from ACR and check for the expected labels (deployed-by=pipeline, commit-sha, pipeline-run-id, etc.)
 If labels are missing or invalid → NON-COMPLIANT regardless of caller
-This closes the "portal push via Event Grid" bypass.
+This catches manually prepared images selected by trusted deployment identities.
 
 Step 4: Verify resource tags (secondary)
-Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
+Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence, but tags are weak because they are mutable and can be copied independently of the image build.
 
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
+
+Scheduled Execution Scope
+Scheduled compliance scans are detection-only. They must not activate or deactivate revisions, shift traffic, update a Container App, or start a deployment, even if the task prompt includes remediation language. Report the non-compliant state and the safe remediation prerequisites instead.
 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
@@ -76,5 +81,5 @@ Activity Logs may take 5-15 minutes to appear in Log Analytics
 claims.appid values for Portal/CLI/PowerShell are well-known Microsoft constants (see compliance_detection.md)
 Caller identity is authoritative; tags can be stale from previous deploys
 Docker image labels are the strongest signal — immutable once pushed to ACR
-The "portal push" attack path: manual ACR push → Event Grid → Automation → looks compliant but image labels are missing
+Manual images can be selected by a trusted deployment identity, but missing immutable labels expose the bypass
 Never revert without user approval
