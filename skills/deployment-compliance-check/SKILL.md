@@ -16,8 +16,11 @@ All Container App deployments MUST go through the approved CI/CD pipeline (GitHu
 
 Deployments via Azure Portal, interactive Azure CLI, or PowerShell are non-compliant.
 Only service principal / managed identity deployments from the CI/CD pipeline are compliant.
-Non-compliant deployments should be flagged, reported, and reverted (with user approval).
+Non-compliant deployments must be flagged and reported. A revert requires explicit user approval and an identified known-good target.
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
+
+Scheduled Scan Safety
+Scheduled compliance scans are detection-only. They must not update Container Apps, shift traffic, activate or deactivate revisions, rerun pipelines, or rerun post-deployment setup. Report any violation, its evidence, and whether a known-good rollback target exists. Only an interactive alert or user-directed investigation may consider a revert, and only after explicit approval.
 
 How the Pipeline Works
 GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
@@ -64,12 +67,14 @@ Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commi
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
-Revert Procedures
-IMPORTANT: Always get user approval before any revert action.
+Remediation Safety
+Scheduled scans must not remediate. For an interactive, approved remediation, first verify a prior known-good revision or a compliant ACR image exists.
 
-Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
+Option A — Reactivate a verified prior Container App revision, then shift traffic and deactivate the non-compliant revision.
 
-Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+Option B — Re-run the CI/CD pipeline to redeploy a verified compliant image from the approved pipeline.
+
+If the app is still on a bootstrap image, has only one revision, or lacks a compliant image in ACR, classify it as `NON-COMPLIANT BOOTSTRAP`; report that no safe rollback target exists rather than attempting a change.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics

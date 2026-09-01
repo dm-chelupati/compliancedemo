@@ -4,15 +4,18 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: A CI/CD pipeline build that carries immutable provenance labels and is deployed to the Container App by an approved identity.
+- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI, or images without valid immutable pipeline labels.
+- **Non-compliant bootstrap**: A placeholder/public image or `initial` provenance values with no known-good prior revision or compliant ACR image.
+
+A successful ACR push alone is not a deployment. Before relying on this demo, provision and validate an actual Container App update path, either in GitHub Actions or through the documented Azure-side automation. Do not claim a deployment path exists solely because an Event Grid or Automation design is described.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL and ACR label checks
+3. **Classifies** → Known portal/CLI/user caller or missing image labels = non-compliant
+4. **For non-compliant** → Interactive investigations use the approval hook before a revert; scheduled scans only report
+5. **For compliant** → Confirms immutable image provenance and approved caller identity
 
 ## Architecture
 
