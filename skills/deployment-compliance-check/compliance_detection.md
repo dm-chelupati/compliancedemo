@@ -9,7 +9,7 @@ For each Container App deployment event (Microsoft.App/containerApps/write):
 Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`).
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
-- appid `04b07795-a710-4e84-bea4-c697bab44963` → Azure CLI → **NON-COMPLIANT**
+- appid `04b07795-a710-4e84-bea4-c697bab44963` or `04b07795-8ddb-461a-bbee-02f9e1bf7b46` → Azure CLI → **NON-COMPLIANT**
 - appid `1950a258-227b-4e31-a9cf-717495945fc2` → Azure PowerShell → **NON-COMPLIANT**
 - appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` → Visual Studio → **NON-COMPLIANT**
 - appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` → Azure Mobile App → **NON-COMPLIANT**
@@ -46,6 +46,7 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
@@ -53,16 +54,17 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 ## KQL Template
 
 ```kql
+let ResourceGroupName = "##resourceGroup##";
 AzureActivity
 | where TimeGenerated > ago(##timeRange##)
 | where OperationNameValue has "Microsoft.App/containerApps/write"
 | where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
-| extend ClaimsObj = parse_json(Claims)
-| extend AppId = tostring(ClaimsObj["appid"])
+| where ResourceGroup =~ ResourceGroupName
+| extend ClaimsObj = parse_json(tostring(Claims))
+| extend AppId = tostring(ClaimsObj.appid)
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"
@@ -75,6 +77,12 @@ AzureActivity
 Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
 
 Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
+
+## Bootstrap Deployments
+
+Classify a running workload as **NON-COMPLIANT BOOTSTRAP** when it is still on a placeholder or public image, has bootstrap metadata such as `commit-sha=initial` or `pipeline-run-id=initial`, and has no prior known-good revision or compliant image in the configured ACR. A bootstrap image outside the configured ACR cannot satisfy the immutable image-label check.
+
+For this result, report the caller, image, tag values, revision count, and ACR lookup outcome. Scheduled scans must not attempt a rollback or deployment; there is no safe target until a verified compliant image and deployment path exist.
 
 ## Signal Priority
 
