@@ -6,13 +6,16 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 - **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
 - **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Non-compliant bootstrap**: A public placeholder image, an empty workload repository in ACR, and `initial` deployment tags; this can also have a known non-compliant bootstrap caller
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
 2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
+3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal with valid image labels = compliant; bootstrap evidence = non-compliant bootstrap
 4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
 5. **For compliant** → Confirms and closes the alert
+
+Scheduled scans are detection-only: they report violations and remediation targets, but never modify Container Apps or trigger deployments.
 
 ## Architecture
 
