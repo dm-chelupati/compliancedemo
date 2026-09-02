@@ -16,19 +16,21 @@ All Container App deployments MUST go through the approved CI/CD pipeline (GitHu
 
 Deployments via Azure Portal, interactive Azure CLI, or PowerShell are non-compliant.
 Only service principal / managed identity deployments from the CI/CD pipeline are compliant.
-Non-compliant deployments should be flagged, reported, and reverted (with user approval).
+Non-compliant deployments should be flagged, reported, and reverted only with explicit user approval.
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
-How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+Expected Deployment Evidence
+A compliant image is built by GitHub Actions, carries immutable compliance labels, and is pushed to the configured ACR. The Container App update must be performed by an approved Azure identity. Do not assume a particular Event Grid, Automation, or direct-update implementation exists: verify the current deployment topology before relying on caller identity as pipeline evidence.
 
 Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+To discover the workspace ID, resolve the subscription diagnostic setting first, then retrieve its customer ID:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -49,17 +51,14 @@ Unknown service principal → INVESTIGATE
 Caller identity ALWAYS takes precedence over tags.
 
 Step 3: Verify Docker image labels (the tamper-proof check)
-This is the most important step. Even if the caller is the pipeline's managed identity, the image itself might have been pushed to ACR manually (bypassing the CI/CD build). When that happens, Event Grid still fires, the Automation Runbook still deploys it, and the Activity Log looks legitimate — but the image was never built by GitHub Actions.
+This is the strongest deployment-origin signal. Get the current image reference, then retrieve its ACR manifest/config and verify the expected labels: deployed-by=pipeline, a 40-character commit-sha, numeric pipeline-run-id, branch, repository, and workflow.
 
-To catch this:
+If the image is public or absent from the configured ACR, labels cannot be verified. Classify it as NON-COMPLIANT BOOTSTRAP when it is the bootstrap placeholder and the app also has initial tags, no compliant ACR image, and no prior known-good revision. Do not invent an image label result for a public image.
 
-Get the currently running image tag from the Container App
-Retrieve the image config from ACR and check for the expected labels (deployed-by=pipeline, commit-sha, pipeline-run-id, etc.)
-If labels are missing or invalid → NON-COMPLIANT regardless of caller
-This closes the "portal push via Event Grid" bypass.
+If labels are missing or invalid on an ACR image, classify NON-COMPLIANT regardless of caller. This also catches a manual ACR push that later triggers an otherwise legitimate deployment path.
 
 Step 4: Verify resource tags (secondary)
-Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
+Compliant deployments stamp tags such as deployed-by=pipeline, pipeline-run-id, commit-sha, and repository. Tags are weak evidence: they can be stale or copied from an earlier deployment, so caller identity and immutable image labels always take precedence.
 
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
@@ -93,9 +92,9 @@ Option A — Reactivate previous Container App revision: list revisions, activat
 Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
 
 Notes
-Activity Logs may take 5-15 minutes to appear in Log Analytics
-claims.appid values for Portal/CLI/PowerShell are well-known Microsoft constants (see compliance_detection.md)
-Caller identity is authoritative; tags can be stale from previous deploys
-Docker image labels are the strongest signal — immutable once pushed to ACR
-The "portal push" attack path: manual ACR push → Event Grid → Automation → looks compliant but image labels are missing
-Never revert without user approval
+Activity Logs may take 5-15 minutes to appear in Log Analytics. Normalize Claims with parse_json(tostring(Claims)) before reading appid.
+The direct Activity Log fallback has a rolling retention boundary; an older bootstrap write can be unavailable even when the active revision still exists. Report caller identity as unavailable because of retention rather than treating missing rows as compliant evidence.
+Caller identity is authoritative when the relevant write is available; otherwise use the current image, labels, tags, and revision inventory to classify bootstrap-only state.
+Docker image labels are the strongest signal because they are immutable once pushed to ACR.
+Scheduled scans are detection-only even if an older task prompt requests remediation. Do not update, reactivate, deactivate, or shift traffic during a scheduled scan.
+Never revert without explicit user approval and a verified compliant image or known-good revision.
