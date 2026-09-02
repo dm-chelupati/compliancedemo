@@ -46,6 +46,7 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
