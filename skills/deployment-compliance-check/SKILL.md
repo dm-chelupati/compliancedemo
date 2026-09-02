@@ -43,6 +43,8 @@ See compliance_detection.md for the detailed decision tree and well-known app ID
 Step 1: Query Activity Logs
 Query the AzureActivity table for Container App write operations. Extract claims.appid and Caller to identify who made the deployment. See compliance_detection.md for the KQL template.
 
+If Log Analytics has no matching write, query the exact Container App with the direct Activity Log fallback before declaring caller evidence unavailable: `az monitor activity-log list --resource-id <container-app-resource-id> --offset 90d`. The retention window is rolling; a zero-result fallback means the caller is unavailable because the write has aged out, not that the deployment is compliant.
+
 Step 2: Classify each deployment by caller
 Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT
 Caller contains @ (user principal) → NON-COMPLIANT
