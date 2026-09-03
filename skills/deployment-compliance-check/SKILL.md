@@ -26,9 +26,11 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the Azure Activity workspace from the subscription diagnostic setting, then retrieve its customer ID:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription ##subscriptionId## --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids ##workspaceResourceId## --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -65,11 +67,11 @@ Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
 Revert Procedures
-IMPORTANT: Always get user approval before any revert action.
+IMPORTANT: Always get user approval before any revert action. A scheduled scan is detection-only and never constitutes that approval.
 
-Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
+Option A — Reactivate a previous known-good Container App revision: list revisions, activate the last known-good one, shift traffic, then deactivate the non-compliant revision.
 
-Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline. For bootstrap-only drift, dispatch the approved workflow on its default branch rather than manually pushing an image or updating the Container App. First confirm the target workflow is active, then dispatch it through the GitHub REST workflow-dispatch endpoint. If GitHub returns 403, including `Must have admin rights to Repository`, report `REMEDIATION BLOCKED — REPOSITORY PERMISSION`; a repository administrator or credential with workflow-dispatch permission must initiate the pipeline. Do not bypass the pipeline with a direct Container App update.
+Option B — Re-run the approved CI/CD pipeline to redeploy a last known compliant image. Before dispatching, verify that the default-branch workflow is active, targets the live registry, and has a functioning deployment path to the Container App. If there is no prior revision or compliant image, or the workflow, target registry, or deployment path is invalid, report `REMEDIATION BLOCKED — PIPELINE/DEPLOYMENT PATH`. Do not bypass the pipeline with a direct Container App update. If GitHub returns 403, including `Must have admin rights to Repository`, report `REMEDIATION BLOCKED — REPOSITORY PERMISSION`; a repository administrator or credential with workflow-dispatch permission must initiate the pipeline.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
