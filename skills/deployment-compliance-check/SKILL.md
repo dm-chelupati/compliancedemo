@@ -72,6 +72,25 @@ Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commi
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
+Use this format:
+
+```text
+COMPLIANCE SCAN
+Timestamp (UTC): <timestamp>
+Scope: <resource group or resource IDs>
+Activity Log window: <window>
+Totals: <total> scanned | <compliant> compliant | <non-compliant> non-compliant | <investigate> investigate
+
+<App name> — <COMPLIANT | NON-COMPLIANT | NON-COMPLIANT BOOTSTRAP | INVESTIGATE>
+Running image: <image>
+Caller identity: <caller / app ID / unavailable due to retention>
+Image labels: <verified labels / unavailable because image is not in ACR / missing or invalid>
+Resource tags: <relevant tag summary>
+Revision state: <active revision, traffic, health>
+Evidence: <concise supporting facts>
+Remediation: <none required | blocked reason | approved action and verification>
+```
+
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action. A scheduled scan is detection-only and never constitutes that approval.
 
