@@ -210,15 +210,16 @@ else
 fi
 sleep 5
 
-# ---- Step 5: Create Compliance Skill ----
-echo -e "\n${YELLOW}[5/7] Creating deployment-compliance-check skill...${NC}"
+# ---- Step 5: Create Compliance Skills ----
+echo -e "\n${YELLOW}[5/7] Creating compliance skills...${NC}"
 
 SKILL_CONTENT=$(cat "$DEMO_DIR/skills/deployment-compliance-check/SKILL.md" 2>/dev/null || echo "")
+SCAN_SKILL_CONTENT=$(cat "$DEMO_DIR/skills/deployment-compliance-scan/SKILL.md" 2>/dev/null || echo "")
 DETECTION_CONTENT=$(cat "$DEMO_DIR/skills/deployment-compliance-check/compliance_detection.md" 2>/dev/null || echo "")
 
 if [[ -n "$SKILL_CONTENT" ]]; then
   SKILL_BODY=$(python3 -c "
-import json, sys
+import json
 skill = open('$DEMO_DIR/skills/deployment-compliance-check/SKILL.md').read()
 detection = open('$DEMO_DIR/skills/deployment-compliance-check/compliance_detection.md').read()
 body = {
@@ -235,7 +236,7 @@ body = {
 }
 print(json.dumps(body))
 ")
-  RESULT=$(agent_api PUT "/api/v2/extendedAgent/skills/deployment-compliance-check" "$SKILL_BODY"  || echo "FAILED")
+  RESULT=$(agent_api PUT "/api/v2/extendedAgent/skills/deployment-compliance-check" "$SKILL_BODY" || echo "FAILED")
   if echo "$RESULT" | grep -q "deployment-compliance-check" 2>/dev/null; then
     echo -e "${GREEN}  ✓ Skill 'deployment-compliance-check' created.${NC}"
   else
@@ -243,6 +244,51 @@ print(json.dumps(body))
   fi
 else
   echo -e "${RED}  Skill files not found at $DEMO_DIR/skills/${NC}"
+fi
+
+SCAN_SKILL_READY=false
+if [[ -n "$SCAN_SKILL_CONTENT" && -n "$DETECTION_CONTENT" ]]; then
+  SCAN_SKILL_BODY=$(python3 -c "
+import json
+skill = open('$DEMO_DIR/skills/deployment-compliance-scan/SKILL.md').read()
+detection = open('$DEMO_DIR/skills/deployment-compliance-check/compliance_detection.md').read()
+body = {
+    'name': 'deployment-compliance-scan',
+    'type': 'Skill',
+    'properties': {
+        'description': 'Read-only scheduled scan for Container App deployment compliance',
+        'tools': ['QueryLogAnalyticsByWorkspaceId', 'GetAzCliHelp', 'RunAzCliReadCommands'],
+        'skillContent': skill,
+        'additionalFiles': [
+            {'filePath': 'compliance_detection.md', 'content': detection}
+        ]
+    }
+}
+print(json.dumps(body))
+")
+  RESULT=$(agent_api PUT "/api/v2/extendedAgent/skills/deployment-compliance-scan" "$SCAN_SKILL_BODY" || echo "FAILED")
+  if echo "$RESULT" | grep -q "deployment-compliance-scan" 2>/dev/null; then
+    SCAN_SKILL_VERIFY=$(agent_api GET "/api/v2/extendedAgent/skills/deployment-compliance-scan" | python3 -c "
+import json, sys
+expected = {'QueryLogAnalyticsByWorkspaceId', 'GetAzCliHelp', 'RunAzCliReadCommands'}
+try:
+    skill = json.load(sys.stdin)
+    tools = set(skill.get('properties', {}).get('tools', []))
+    print('ok' if skill.get('name') == 'deployment-compliance-scan' and tools == expected else 'invalid')
+except Exception:
+    print('invalid')
+")
+    if [ "$SCAN_SKILL_VERIFY" = "ok" ]; then
+      SCAN_SKILL_READY=true
+      echo -e "${GREEN}  ✓ Skill 'deployment-compliance-scan' created and verified read-only.${NC}"
+    else
+      echo -e "${RED}  Scheduled scan skill was not verified read-only; scheduled task creation will be skipped.${NC}"
+    fi
+  else
+    echo -e "${RED}  Scheduled scan skill creation failed; scheduled task creation will be skipped. Response: ${RESULT:0:200}${NC}"
+  fi
+else
+  echo -e "${RED}  Scheduled scan skill files not found; scheduled task creation will be skipped.${NC}"
 fi
 
 # ---- Step 6: Create Approval Hook ----
@@ -337,13 +383,16 @@ curl -s -o /dev/null -X DELETE \
   -H "Authorization: Bearer ${TOKEN}" 2>/dev/null || true
 
 # ---- Create scheduled task for periodic compliance scans ----
-echo "   Creating compliance scan scheduled task..."
-TOKEN=$(get_agent_token)
+if [ "$SCAN_SKILL_READY" != "true" ]; then
+  echo -e "${RED}  Skipping compliance-scan creation: deployment-compliance-scan is not verified read-only.${NC}"
+else
+  echo "   Creating compliance scan scheduled task..."
+  TOKEN=$(get_agent_token)
 
-# Delete existing task if present
-EXISTING_TASKS=$(curl -s "${AGENT_ENDPOINT}/api/v1/scheduledtasks" \
-  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null || echo "[]")
-echo "$EXISTING_TASKS" | python3 -c "
+  # Delete the existing task only after the replacement's skill is verified.
+  EXISTING_TASKS=$(curl -s "${AGENT_ENDPOINT}/api/v1/scheduledtasks" \
+    -H "Authorization: Bearer ${TOKEN}" 2>/dev/null || echo "[]")
+  echo "$EXISTING_TASKS" | python3 -c "
 import sys,json
 try:
     tasks=json.load(sys.stdin)
@@ -352,36 +401,37 @@ try:
             print(t.get('id',''))
 except: pass
 " 2>/dev/null | while read -r task_id; do
-  if [ -n "$task_id" ]; then
-    curl -s -o /dev/null -X DELETE "${AGENT_ENDPOINT}/api/v1/scheduledtasks/${task_id}" \
-      -H "Authorization: Bearer ${TOKEN}" 2>/dev/null
-  fi
-done
+    if [ -n "$task_id" ]; then
+      curl -s -o /dev/null -X DELETE "${AGENT_ENDPOINT}/api/v1/scheduledtasks/${task_id}" \
+        -H "Authorization: Bearer ${TOKEN}" 2>/dev/null
+    fi
+  done
 
-python3 -c "
+  python3 -c "
 import json
 body = {
     'name': 'compliance-scan',
     'description': 'compliance-scan',
     'cronExpression': '*/30 * * * *',
-    'agentPrompt': '''Load the deployment-compliance-check skill and follow it to check whether the latest running image is compliant for all Container Apps in scope. Use hooks before any modification action on a resource. Report findings in the format specified by the skill. Remediate following the skill instructions'''
+    'agentPrompt': '''Load the deployment-compliance-scan skill and assess whether the latest running image is compliant for every Container App in scope. Report findings in the format specified by the skill. This scheduled task is detection-only: do not modify Container Apps, reactivate revisions, dispatch workflows, or alter agent configuration. For any non-compliant deployment, report the required approved CI/CD remediation and whether a safe rollback target exists.'''
 }
 with open('/tmp/task-body.json', 'w') as f:
     json.dump(body, f)
 "
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-  -X POST "${AGENT_ENDPOINT}/api/v1/scheduledtasks" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data-binary @/tmp/task-body.json)
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "${AGENT_ENDPOINT}/api/v1/scheduledtasks" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data-binary @/tmp/task-body.json)
 
-if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
-  echo -e "${GREEN}  ✓ Scheduled task created: compliance-scan (every 30 min)${NC}"
-else
-  echo -e "${YELLOW}  Scheduled task returned HTTP ${HTTP_CODE}${NC}"
+  if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
+    echo -e "${GREEN}  ✓ Scheduled task created: compliance-scan (every 30 min)${NC}"
+  else
+    echo -e "${YELLOW}  Scheduled task returned HTTP ${HTTP_CODE}${NC}"
+  fi
+  rm -f /tmp/task-body.json
 fi
-rm -f /tmp/task-body.json
 
 # ---- Step 8: GitHub connector + code repo ----
 echo -e "\n${YELLOW}[8/8] Configuring GitHub connector and code repository...${NC}"
@@ -560,6 +610,22 @@ if [ "$SKILL_OK" = "ok" ]; then
   VERIFY_PASS=$((VERIFY_PASS + 1))
 else
   echo -e "    ${RED}✗ Skill: deployment-compliance-check not found${NC}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+SCAN_SKILL_OK=$(curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/skills/deployment-compliance-scan" \
+  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('ok' if d.get('name')=='deployment-compliance-scan' else 'missing')
+except: print('missing')
+" 2>/dev/null)
+if [ "$SCAN_SKILL_OK" = "ok" ]; then
+  echo -e "    ${GREEN}✓ Skill: deployment-compliance-scan (read-only)${NC}"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
+else
+  echo -e "    ${RED}✗ Skill: deployment-compliance-scan not found${NC}"
   VERIFY_FAIL=$((VERIFY_FAIL + 1))
 fi
 
