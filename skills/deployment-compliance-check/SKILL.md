@@ -31,6 +31,12 @@ To discover the workspace ID, resolve the subscription diagnostic setting first,
 az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
 az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
 
+If QueryLogAnalyticsByWorkspaceId errors, do not interpret the failure as an empty result. Run the same read-only KQL through the CLI fallback:
+
+az monitor log-analytics query --workspace <workspace-customer-id> --analytics-query "<same KQL>" --subscription <subscription-id> -o json
+
+Before declaring that no writes exist, query a target-resource-group sanity summary with total row count, newest row timestamp, and Container App write count.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
