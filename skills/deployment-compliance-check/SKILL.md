@@ -69,7 +69,7 @@ IMPORTANT: Always get user approval before any revert action.
 
 Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
 
-Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline. For bootstrap-only drift, dispatch the approved workflow on its default branch rather than manually pushing an image or updating the Container App. First confirm the target workflow is active, then dispatch it through the GitHub REST workflow-dispatch endpoint. If GitHub returns 403, including `Must have admin rights to Repository`, report `REMEDIATION BLOCKED — REPOSITORY PERMISSION`; a repository administrator or credential with workflow-dispatch permission must initiate the pipeline. Do not bypass the pipeline with a direct Container App update.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
