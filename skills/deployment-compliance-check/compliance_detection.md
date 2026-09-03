@@ -6,7 +6,7 @@ For each Container App deployment event (Microsoft.App/containerApps/write):
 
 ### 1. Classify the caller
 
-Extract `claims.appid` from Activity Logs with `parse_json(tostring(Claims))`, because `Claims` can be a dynamic or string value.
+Extract `claims.appid` from Activity Logs with `parse_json(tostring(Claims))`, because `Claims` can be a dynamic or string value. First confirm the selected workspace has AzureActivity rows in the requested scope. If the detailed workspace query fails or returns no Container App write rows, use `az monitor activity-log list --resource-id <containerAppResourceId> --offset 90d`. The fallback is limited to a rolling 90-day window; when the deployment is older, record caller identity as unavailable because of retention rather than treating the absence as a compliant caller.
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
 - appid `04b07795-a710-4e84-bea4-c697bab44963` or `04b07795-8ddb-461a-bbee-02f9e1bf7b46` → Azure CLI → **NON-COMPLIANT**

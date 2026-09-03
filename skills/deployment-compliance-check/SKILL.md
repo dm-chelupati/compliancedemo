@@ -31,6 +31,12 @@ Resolve the Azure Activity workspace from the subscription diagnostic setting, t
 az monitor diagnostic-settings subscription list --subscription ##subscriptionId## --query "value[?name=='activity-to-law'].workspaceId" -o tsv
 az monitor log-analytics workspace show --ids ##workspaceResourceId## --query customerId -o tsv
 
+If the workspace query fails or returns no scoped Container App write rows, verify the exact app with the direct Activity Log fallback:
+
+az monitor activity-log list --resource-id ##containerAppResourceId## --offset 90d --subscription ##subscriptionId##
+
+The direct Activity Log window is rolling and cannot retrieve events older than 90 days. If no event is available after this fallback, report the caller identity as unavailable because of retention; do not infer compliance from its absence.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
