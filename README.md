@@ -27,9 +27,9 @@ Activity Log: containerApps/write
     ↓                          ↓
 Alert Rule fires          Scheduled Task (every 30 min)
     ↓                          ↓
-SRE Agent Response Plan   SRE Agent Compliance Scan
-    ↓
-deployment-compliance-check skill (KQL queries)
+SRE Agent Response Plan   Read-only Compliance Scan
+    ↓                          ↓
+deployment-compliance-check  deployment-compliance-scan
     ↓
 Compliant? ──yes──► Close alert
     ↓ no
@@ -104,7 +104,8 @@ git add . && git commit -m "test deployment" && git push
 ├── .github/workflows/deploy-container-app.yml  # CI/CD pipeline
 ├── infra/                                       # Bicep infrastructure
 ├── scripts/post-deploy.sh                       # SRE Agent configuration
-├── skills/deployment-compliance-check/          # KQL-based compliance skill
+├── skills/deployment-compliance-check/          # Approval-gated compliance skill
+├── skills/deployment-compliance-scan/           # Read-only scheduled scan skill
 ├── hooks/deployment-compliance-approval.yaml    # Approval hook for reverts
 └── src/api/                                     # Sample Express.js app
 ```
