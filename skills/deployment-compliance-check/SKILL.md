@@ -70,6 +70,9 @@ Classify the app as NON-COMPLIANT BOOTSTRAP when it is still on the public place
 Step 6: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
+Scheduled Task Execution
+Scheduled compliance scans are detection-only. Report the classification and required remediation, but do not modify a Container App, reactivate or deactivate revisions, or dispatch a pipeline. Reverts require an interactive investigation, a verified compliant target, and a successful compliance approval hook.
+
 Revert Procedures
 IMPORTANT: Invoke the configured compliance approval hook before any revert action, and do not change a resource unless a known-good revision or approved pipeline image has been verified.
 
