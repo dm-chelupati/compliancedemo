@@ -81,7 +81,7 @@ Note: When a deployment shows as ServicePrincipal (potentially compliant), you s
 
 Classify the app as **NON-COMPLIANT BOOTSTRAP** when it is still running a public or placeholder image, its tags use bootstrap values such as `commit-sha=initial` or `pipeline-run-id=initial`, and there is no compliant image in the configured ACR or prior revision to reactivate. If the relevant Activity Log event has aged out of the rolling retention window, report caller identity as unavailable rather than inferring compliance.
 
-A scheduled scan must only report this state. Do not manually update the Container App, and do not dispatch a workflow until its default branch has been verified to target the live registry and to have a working deployment path.
+A scheduled scan must only report this state. Do not manually update the Container App, and do not dispatch a workflow until its default branch has been verified to target the live registry and to have a working deployment path. Report revision health separately: an unhealthy bootstrap revision is an availability finding, not additional proof of deployment non-compliance or a reason to bypass the approved deployment path.
 
 ## Signal Priority
 
