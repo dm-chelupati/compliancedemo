@@ -68,7 +68,7 @@ Step 5: Identify bootstrap-only state
 Classify the app as NON-COMPLIANT BOOTSTRAP when it is still on the public placeholder image, pipeline tags are `initial`, the configured ACR contains no application repository, and no prior compliant revision exists. This is not a revert candidate because neither Option A nor Option B has a safe target.
 
 Step 6: Generate compliance report
-Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
+Report the scan timestamp in UTC, audit-window duration, scoped Container App count, and counts by classification. For each app, include its active revision and image, caller result (or `unavailable: activity-log retention`), configured ACR and image-label result, relevant deployment tags, verified compliant rollback target (if any), classification, and required remediation. If the Activity Log query finds no writes, include the scoped workspace row-count sanity result; do not describe zero write rows as proof that no deployment ever occurred.
 
 Scheduled Task Execution
 Scheduled compliance scans are detection-only. Report the classification and required remediation, but do not modify a Container App, reactivate or deactivate revisions, or dispatch a pipeline. Reverts require an interactive investigation, a verified compliant target, and a successful compliance approval hook.
