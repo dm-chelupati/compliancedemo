@@ -4,37 +4,41 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: Images built by the approved GitHub Actions workflow with valid immutable compliance labels and deployed through a verified Azure deployment path.
+- **Non-compliant**: Deployments by Azure Portal, ad-hoc CLI, or PowerShell; images without the required pipeline labels; and bootstrap placeholder state.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+2. **SRE Agent investigates** → Checks Activity Log caller identity, immutable image labels, resource tags, revisions, and registry inventory.
+3. **Classifies** → `COMPLIANT`, `NON-COMPLIANT`, `NON-COMPLIANT BOOTSTRAP`, or `INVESTIGATE`.
+4. **For non-compliant** → Reports the finding. Reverts require explicit user approval and a known-good revision or verified CI/CD deployment path.
+5. **For compliant** → Confirms and closes the alert.
+
+Scheduled scans are detection-only. They never directly update a Container App or dispatch a workflow without validating the default-branch deployment path.
 
 ## Architecture
 
 ```
 GitHub Actions (push to main)
     ↓
-Build Docker image → Push to ACR
+Build Docker image with immutable labels → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Verified Azure-side deployment controller (for example, Automation Runbook)
     ↓
-Activity Log: containerApps/write
+Container App update → Activity Log: containerApps/write
     ↓                          ↓
 Alert Rule fires          Scheduled Task (every 30 min)
     ↓                          ↓
 SRE Agent Response Plan   SRE Agent Compliance Scan
     ↓
-deployment-compliance-check skill (KQL queries)
+deployment-compliance-check skill
     ↓
 Compliant? ──yes──► Close alert
     ↓ no
-Activate approval hook → Wait for user → Revert revision
+Report finding → explicit user approval → revert only to a known-good target
 ```
+
+> The workflow currently builds and pushes the image. Provision and validate the Azure-side deployment controller before treating a pipeline run as a completed Container App deployment.
 
 ## Deployed Resources
 
