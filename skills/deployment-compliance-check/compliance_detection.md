@@ -6,10 +6,10 @@ For each Container App deployment event (Microsoft.App/containerApps/write):
 
 ### 1. Classify the caller
 
-Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`).
+Extract `claims.appid` from Activity Logs with `parse_json(tostring(Claims))["appid"]`.
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
-- appid `04b07795-a710-4e84-bea4-c697bab44963` → Azure CLI → **NON-COMPLIANT**
+- appid `04b07795-a710-4e84-bea4-c697bab44963` or `04b07795-8ddb-461a-bbee-02f9e1bf7b46` → Azure CLI → **NON-COMPLIANT**
 - appid `1950a258-227b-4e31-a9cf-717495945fc2` → Azure PowerShell → **NON-COMPLIANT**
 - appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` → Visual Studio → **NON-COMPLIANT**
 - appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` → Azure Mobile App → **NON-COMPLIANT**
@@ -31,6 +31,7 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 **All labels present** + known pipeline caller → **COMPLIANT**
 **All labels present** + unknown caller → **INVESTIGATE**
 **Any labels missing** → **NON-COMPLIANT** (image was not built by the pipeline)
+**Image not hosted in the configured ACR** → **NON-COMPLIANT**, because its immutable approved-pipeline labels cannot be verified
 
 This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
 
@@ -40,29 +41,44 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 
 **Caller identity always takes precedence over tags. Image labels always take precedence over tags.**
 
+### 4. Identify bootstrap-only state
+
+Classify an app as **NON-COMPLIANT BOOTSTRAP** instead of a generic revert candidate when all of the following are true:
+
+- The only active revision uses the public placeholder image.
+- Pipeline tags such as `commit-sha` and `pipeline-run-id` are `initial`.
+- The configured ACR has no application repository or compliant image.
+- There is no prior compliant revision to reactivate.
+
+Do not manually replace the image or run a workflow targeting a different registry. The safe remediation is to repair and merge the approved deployment path, then let that path deploy a label-compliant image.
+
 ## Well-Known Azure Application IDs
 
 | Application ID | Name |
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
 
 ## KQL Template
 
+Resolve the workspace through the subscription `activity-to-law` diagnostic setting, then confirm that the selected workspace has recent rows before interpreting an empty detail result.
+
 ```kql
+let targetResourceGroup = "<resource-group>";
 AzureActivity
 | where TimeGenerated > ago(##timeRange##)
-| where OperationNameValue has "Microsoft.App/containerApps/write"
-| where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
-| extend ClaimsObj = parse_json(Claims)
-| extend AppId = tostring(ClaimsObj["appid"])
+| where ResourceGroup =~ targetResourceGroup
+| where OperationNameValue =~ "MICROSOFT.APP/CONTAINERAPPS/WRITE"
+| where ActivityStatusValue =~ "Success"
+| extend ClaimsObj = parse_json(tostring(Claims))
+| extend AppId = tostring(ClaimsObj.appid)
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"
@@ -72,7 +88,7 @@ AzureActivity
 | order by TimeGenerated desc
 ```
 
-Set `##timeRange##` based on context (30m, 1h, 4h, 24h).
+Set `##timeRange##` based on context (30m, 1h, 4h, 24h). For historical bootstrap checks use a 90-day window and also run `az monitor activity-log list --offset 90d` for the exact Container App resource; if the event has aged beyond the rolling retention window, report the caller identity as unavailable rather than inferring compliance.
 
 Note: When a deployment shows as ServicePrincipal (potentially compliant), you still need to verify Docker image labels to confirm the image was actually built by the pipeline. KQL alone cannot check image labels — use RunAzCliReadCommands to query ACR.
 
