@@ -41,7 +41,7 @@ How to Detect Compliance
 See compliance_detection.md for the detailed decision tree, known app IDs, and bootstrap-only classification.
 
 Step 1: Query Activity Logs
-Query the AzureActivity table for Container App write operations. Use `parse_json(tostring(Claims))` before extracting `claims.appid`. First run a workspace and resource-group row-count query to confirm the source contains data, then query Container App writes. If Log Analytics returns no write rows, use direct Activity Log reads with `--offset 90d`; the activity-log service does not accept fixed start times older than 90 days.
+Query the AzureActivity table for Container App write operations. Use `parse_json(tostring(Claims))` before extracting `claims.appid`. First run a workspace and resource-group row-count query to confirm the source contains data, then query Container App writes. If a compound KQL query fails, retry the row-count and write queries separately before falling back to direct Activity Log reads. If Log Analytics returns no write rows, use direct Activity Log reads with `--offset 90d`; the activity-log service does not accept fixed start times older than 90 days.
 
 Step 2: Classify each deployment by caller
 Well-known Azure Portal / CLI / PowerShell app IDs → NON-COMPLIANT
