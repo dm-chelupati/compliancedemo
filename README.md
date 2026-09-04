@@ -4,15 +4,16 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: Deployments through the approved CI/CD pipeline with valid immutable image labels and a pipeline caller.
+- **Non-compliant**: Deployments through Azure Portal, ad-hoc CLI, PowerShell, or images without approved pipeline labels.
+- **Bootstrap-only**: A placeholder image with `initial` deployment tags, no application image in the configured ACR, and no prior compliant revision.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill using Activity Logs, image labels, tags, and revision history.
+3. **Classifies** → Determines whether the deployment is compliant, non-compliant, or non-compliant bootstrap-only.
+4. **Interactive alert only** → Activates the approval hook before proposing a revert, and only when a verified compliant revision or image exists.
+5. **Scheduled scan** → Detection-only; it reports findings and required remediation without modifying resources or dispatching workflows.
 
 ## Architecture
 
@@ -21,19 +22,16 @@ GitHub Actions (push to main)
     ↓
 Build Docker image → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Container App deployment path
     ↓
 Activity Log: containerApps/write
     ↓                          ↓
 Alert Rule fires          Scheduled Task (every 30 min)
     ↓                          ↓
-SRE Agent Response Plan   SRE Agent Compliance Scan
-    ↓
-deployment-compliance-check skill (KQL queries)
-    ↓
-Compliant? ──yes──► Close alert
-    ↓ no
-Activate approval hook → Wait for user → Revert revision
+Interactive investigation  Detection-only compliance scan
+    ↓                          ↓
+Approval hook before       Report classification and
+any proposed revert        required remediation
 ```
 
 ## Deployed Resources
