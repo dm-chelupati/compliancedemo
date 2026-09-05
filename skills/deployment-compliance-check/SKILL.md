@@ -60,17 +60,47 @@ Retrieve the image config from ACR and check for the expected labels (deployed-b
 If labels are missing or invalid → NON-COMPLIANT regardless of caller
 This closes the "portal push via Event Grid" bypass.
 
+Collect revision and ACR inventory evidence before classification:
+
+```bash
+az containerapp revision list --name <app-name> --resource-group <resource-group> --subscription <subscription-id> --query "[].{name:name,active:properties.active,runningState:properties.runningState,healthState:properties.healthState,images:properties.template.containers[].image}" -o json
+az acr repository list --name <acr-name> --subscription <subscription-id> -o json
+```
+
+If the running image is outside the configured ACR and the ACR has no label-compliant image, report `NON-COMPLIANT BOOTSTRAP` rather than treating unavailable image labels as compliant. Include whether a healthy prior revision exists.
+
 Step 4: Verify resource tags (secondary)
 Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
 
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
-Revert Procedures
-A scheduled scan is detection-only unless it identifies both a verified compliant replacement and a safe rollback target. Never use a public placeholder or bootstrap revision as a rollback target.
+Use this report format:
 
-Before any modification:
-1. Identify a prior healthy revision or an ACR image with all required immutable labels.
+```text
+Deployment compliance scan
+Scan timestamp (UTC): <timestamp>
+Scope: <resource group or app list>
+Activity Log window: <time range>
+Totals: <total> scanned | <compliant> compliant | <non-compliant> non-compliant | <investigate> investigate
+
+<App name>
+- Revision / health: <revision> / <health and running state>
+- Running image: <image reference>
+- Caller evidence: <caller type, app ID, timestamp>; or Not available (no retained successful write)
+- Image-label evidence: <all required labels verified>; or <missing / image outside configured ACR>
+- Tag evidence: <relevant tags>
+- Classification: <COMPLIANT | NON-COMPLIANT | NON-COMPLIANT BOOTSTRAP | INVESTIGATE>
+- Action: <detection-only report / candidate target for interactive remediation>
+```
+
+For `NON-COMPLIANT BOOTSTRAP`, explicitly state whether a label-compliant ACR image and a healthy prior revision exist. Do not represent unavailable caller history as a compliant deployment.
+
+Interactive Revert Procedures
+Scheduled scans are strictly detection-only. They must never modify revisions, traffic, workflows, or images, even when a compliant replacement and rollback target are available. Report the violation and candidate target instead.
+
+Only an interactive incident-response request may modify a deployment. Before any modification:
+1. Identify a prior healthy revision or an ACR image with all required immutable labels. Never use a public placeholder or bootstrap revision as a rollback target.
 2. Invoke the configured `deployment-compliance-approval` hook. If it blocks or approval is unavailable, do not modify the Container App.
 3. Verify the proposed target's image, labels, and revision health. Keep the current revision active until the replacement is healthy.
 
