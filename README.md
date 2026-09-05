@@ -31,12 +31,13 @@ Activity Log: containerApps/write
 Alert Rule fires          Scheduled Task (every 30 min, detection-only)
     ↓                          ↓
 SRE Agent Response Plan   SRE Agent Compliance Scan
-    ↓
-deployment-compliance-check skill (activity, ACR, tags, revisions)
-    ↓
-Compliant? ──yes──► Confirm / close alert
-    ↓ no
-Report violation → verify healthy compliant target → approval hook → interactive rollback
+    ↓                          ↓
+deployment-compliance-check deployment-compliance-scan
+(interactive, approval-gated)  (read-only)
+    ↓                          ↓
+Report violation → verify       Report status and candidate targets only
+healthy compliant target →
+approval hook → interactive rollback
 ```
 
 ## Deployed Resources
@@ -63,14 +64,16 @@ Report violation → verify healthy compliant target → approval hook → inter
 azd init
 azd provision
 
-# 2. Configure SRE Agent (connectors, skill, hook, response plan, scheduled task)
-bash scripts/post-deploy.sh
-
-# 3. Create service principal for GitHub Actions (run in Azure Portal Cloud Shell)
+# 2. Create the GitHub Actions service principal (run in Azure Portal Cloud Shell)
+#    Save its application (client) ID from the JSON output.
 az ad sp create-for-rbac --name "compliancedemo-deploy" \
   --role Contributor \
   --scopes "/subscriptions/<SUB_ID>/resourceGroups/rg-compliancedemo" \
   --json-auth
+
+# 3. Configure SRE Agent (connectors, skills, hook, response plan, scheduled task)
+#    The caller allowlist is required for a COMPLIANT classification.
+APPROVED_PIPELINE_CALLER_IDS="<service-principal-client-id>" bash scripts/post-deploy.sh
 
 # 4. Add GitHub secrets (see below)
 
@@ -80,7 +83,7 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 
 ### Refreshing Agent Configuration
 
-After changing the compliance skill, detection rules, approval hook, or scheduled-task template, rerun `bash scripts/post-deploy.sh` interactively. It uploads the current skill files and recreates `compliance-scan` with the detection-only prompt. Do not run this script from a scheduled scan because it changes agent configuration and task state.
+After changing either compliance skill, detection rules, approval hook, or scheduled-task template, rerun `bash scripts/post-deploy.sh` interactively. Set `APPROVED_PIPELINE_CALLER_IDS` to a comma-separated allowlist of GitHub Actions deployment client IDs; without it, the scan fails closed by classifying otherwise eligible callers as `INVESTIGATE`. The script uploads the approval-gated interactive skill and the read-only scheduled-scan skill, then recreates `compliance-scan` with the detection-only prompt. Do not run this script from a scheduled scan because it changes agent configuration and task state.
 
 ### GitHub Secrets & Variables
 
@@ -111,7 +114,8 @@ git add . && git commit -m "test deployment" && git push
 ├── .github/workflows/deploy-container-app.yml  # CI/CD pipeline
 ├── infra/                                       # Bicep infrastructure
 ├── scripts/post-deploy.sh                       # SRE Agent configuration
-├── skills/deployment-compliance-check/          # KQL-based compliance skill
+├── skills/deployment-compliance-check/          # Interactive, approval-gated skill
+├── skills/deployment-compliance-scan/           # Read-only scheduled scan skill
 ├── hooks/deployment-compliance-approval.yaml    # Approval hook for reverts
 └── src/api/                                     # Sample Express.js app
 ```
