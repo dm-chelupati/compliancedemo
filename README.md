@@ -11,8 +11,9 @@ When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
 2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
 3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+4. **For non-compliant interactive incidents** → Activates the approval hook before recommending a verified rollback target
+5. **For scheduled scans** → Reports evidence and remediation prerequisites only; it does not modify resources
+6. **For compliant** → Confirms and closes the alert
 
 ## Architecture
 
@@ -24,16 +25,8 @@ Build Docker image → Push to ACR
 az containerapp update (with compliance tags)
     ↓
 Activity Log: containerApps/write
-    ↓                          ↓
-Alert Rule fires          Scheduled Task (every 30 min)
-    ↓                          ↓
-SRE Agent Response Plan   SRE Agent Compliance Scan
-    ↓
-deployment-compliance-check skill (KQL queries)
-    ↓
-Compliant? ──yes──► Close alert
-    ↓ no
-Activate approval hook → Wait for user → Revert revision
+    ├─ Alert Rule → Response Plan → Approval-gated interactive remediation
+    └─ Scheduled Task (every 30 min) → Detection-only compliance report
 ```
 
 ## Deployed Resources

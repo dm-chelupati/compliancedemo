@@ -64,6 +64,9 @@ Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commi
 Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
+Scheduled Scan Safety
+Scheduled compliance scans are detection-only. Do not modify a Container App, activate an approval hook, rerun a pipeline, or attempt a rollback from a scheduled execution. Report the classification, evidence, and whether a known-good rollback target exists. Reserve any revert for an interactive incident after explicit user approval.
+
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
 

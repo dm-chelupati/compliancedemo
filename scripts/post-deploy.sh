@@ -364,7 +364,7 @@ body = {
     'name': 'compliance-scan',
     'description': 'compliance-scan',
     'cronExpression': '*/30 * * * *',
-    'agentPrompt': '''Load the deployment-compliance-check skill and follow it to check whether the latest running image is compliant for all Container Apps in scope. Use hooks before any modification action on a resource. Report findings in the format specified by the skill. Remediate following the skill instructions'''
+    'agentPrompt': '''Load the deployment-compliance-check skill and check whether the latest running image is compliant for all Container Apps in scope. Analyze caller identity, immutable image labels, resource tags, and available revisions. Report the scan timestamp, time range, summary counts, evidence, and any violations in the skill's format. This scheduled task is detection-only: do not modify resources, invoke approval hooks, rerun pipelines, or attempt a rollback. State whether a verified rollback target exists and list remediation prerequisites.'''
 }
 with open('/tmp/task-body.json', 'w') as f:
     json.dump(body, f)
