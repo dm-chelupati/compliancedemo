@@ -67,11 +67,16 @@ Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
 Revert Procedures
-IMPORTANT: Always get user approval before any revert action.
+A scheduled scan is detection-only unless it identifies both a verified compliant replacement and a safe rollback target. Never use a public placeholder or bootstrap revision as a rollback target.
 
-Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
+Before any modification:
+1. Identify a prior healthy revision or an ACR image with all required immutable labels.
+2. Invoke the configured `deployment-compliance-approval` hook. If it blocks or approval is unavailable, do not modify the Container App.
+3. Verify the proposed target's image, labels, and revision health. Keep the current revision active until the replacement is healthy.
 
-Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+Option A — Reactivate previous Container App revision: list revisions, activate the last known-good revision, shift traffic only after it is healthy, then deactivate the non-compliant revision.
+
+Option B — Re-run the CI/CD pipeline to redeploy a label-compliant image only after confirming the workflow targets the live ACR and includes a functioning deployment path to the Container App. A build-and-push-only workflow is not a remediation path.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
@@ -79,4 +84,4 @@ claims.appid values for Portal/CLI/PowerShell are well-known Microsoft constants
 Caller identity is authoritative; tags can be stale from previous deploys
 Docker image labels are the strongest signal — immutable once pushed to ACR
 The "portal push" attack path: manual ACR push → Event Grid → Automation → looks compliant but image labels are missing
-Never revert without user approval
+Never revert without explicit approval
