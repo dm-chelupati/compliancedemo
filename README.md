@@ -10,9 +10,10 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
 2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = potentially compliant until image labels are validated
+4. **For non-compliant alerts** → Activates approval hook and recommends a verified, healthy rollback target
+5. **For scheduled scans** → Reports findings only; no resource or pipeline modification is performed
+6. **For compliant** → Confirms and closes the alert
 
 ## Architecture
 

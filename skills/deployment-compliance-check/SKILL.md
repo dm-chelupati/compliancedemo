@@ -26,9 +26,13 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the authoritative workspace from the subscription diagnostic setting, then retrieve its customer ID:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
+The subscription diagnostic setting is authoritative when the resource group contains multiple Log Analytics workspaces.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -66,6 +70,9 @@ A revision is a verified compliant rollback target only when its image passes th
 
 Step 6: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, any verified compliant rollback target, and details of violations.
+
+Scheduled Scan Behavior
+Scheduled scans are detection-only. They must not modify a Container App, reactivate or deactivate revisions, or rerun a pipeline. Report the recommended interactive remediation instead.
 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
