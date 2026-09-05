@@ -16,19 +16,21 @@ All Container App deployments MUST go through the approved CI/CD pipeline (GitHu
 
 Deployments via Azure Portal, interactive Azure CLI, or PowerShell are non-compliant.
 Only service principal / managed identity deployments from the CI/CD pipeline are compliant.
-Non-compliant deployments should be flagged, reported, and reverted (with user approval).
+Non-compliant deployments must be flagged and reported. A rollback is permitted only after a verified healthy, label-compliant target is available and the required approval hook allows the change.
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
 How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+GitHub Actions builds the Docker image with immutable compliance labels and pushes it to ACR. A compliant deployment also requires a verified path that updates the Container App, either directly from the workflow or through provisioned Event Grid and Automation resources running under a managed identity. An image push alone is not a deployment path.
 
 Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the Activity Log workspace from the subscription diagnostic setting, then retrieve its customer ID. Do not select a workspace by name because the resource group can contain more than one workspace:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -65,11 +67,16 @@ Step 5: Generate compliance report
 Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
 
 Revert Procedures
-IMPORTANT: Always get user approval before any revert action.
+A scheduled scan is detection-only unless it identifies both a verified compliant replacement and a safe rollback target. Never use a public placeholder or bootstrap revision as a rollback target.
 
-Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
+Before any modification:
+1. Identify a prior healthy revision or an ACR image with all required immutable labels.
+2. Invoke the configured `deployment-compliance-approval` hook. If it blocks or approval is unavailable, do not modify the Container App.
+3. Verify the proposed target's image, labels, and revision health. Keep the current revision active until the replacement is healthy.
 
-Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
+Option A — Reactivate previous Container App revision: list revisions, activate the last known-good revision, shift traffic only after it is healthy, then deactivate the non-compliant revision.
+
+Option B — Re-run the CI/CD pipeline to redeploy a label-compliant image only after confirming the workflow targets the live ACR and includes a functioning deployment path to the Container App. A build-and-push-only workflow is not a remediation path.
 
 Notes
 Activity Logs may take 5-15 minutes to appear in Log Analytics
@@ -77,4 +84,4 @@ claims.appid values for Portal/CLI/PowerShell are well-known Microsoft constants
 Caller identity is authoritative; tags can be stale from previous deploys
 Docker image labels are the strongest signal — immutable once pushed to ACR
 The "portal push" attack path: manual ACR push → Event Grid → Automation → looks compliant but image labels are missing
-Never revert without user approval
+Never revert without explicit approval

@@ -300,9 +300,9 @@ body = {
     'maxAttempts': 3,
     'instructions': '''Use the deployment-compliance-check skill to investigate this alert.
 
-The skill has all the KQL templates, classification rules, and revert procedures.
-If the deployment is non-compliant, activate the deployment-compliance-approval hook before reverting.
-Never revert without user approval.'''
+The skill has the KQL templates and classification rules. Report non-compliance by default.
+Only propose a rollback after identifying a healthy, label-compliant replacement and a safe rollback target.
+Before any modification, activate the deployment-compliance-approval hook and wait for explicit user approval.'''
 }
 with open('/tmp/filter-body.json', 'w') as f:
     json.dump(body, f)
@@ -364,7 +364,7 @@ body = {
     'name': 'compliance-scan',
     'description': 'compliance-scan',
     'cronExpression': '*/30 * * * *',
-    'agentPrompt': '''Load the deployment-compliance-check skill and follow it to check whether the latest running image is compliant for all Container Apps in scope. Use hooks before any modification action on a resource. Report findings in the format specified by the skill. Remediate following the skill instructions'''
+    'agentPrompt': '''Load the deployment-compliance-check skill and check whether the latest running image is compliant for all Container Apps in scope. Scheduled scans are detection-only: do not modify Container Apps, revisions, traffic, or workflows. Report findings in the skill format, including whether a healthy label-compliant replacement and rollback target exist. If either is missing, report the blocked remediation and the CI/CD repair needed.'''
 }
 with open('/tmp/task-body.json', 'w') as f:
     json.dump(body, f)
