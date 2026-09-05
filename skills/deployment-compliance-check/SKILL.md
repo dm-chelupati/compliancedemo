@@ -67,6 +67,8 @@ az containerapp revision list --name <app-name> --resource-group <resource-group
 az acr repository list --name <acr-name> --subscription <subscription-id> -o json
 ```
 
+Do not treat `properties.latestReadyRevisionName` as proof that a revision is healthy. Always inspect that revision's `healthState` and `runningState` directly: the API can populate `latestReadyRevisionName` even when its revision is `Unhealthy` or `Failed`.
+
 If the running image is outside the configured ACR and the ACR has no label-compliant image, report `NON-COMPLIANT BOOTSTRAP` rather than treating unavailable image labels as compliant. Include whether a healthy prior revision exists.
 
 Step 4: Verify resource tags (secondary)
