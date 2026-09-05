@@ -34,6 +34,12 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 
 This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
 
+### 2a. Identify bootstrap-only deployments
+
+Classify the current state as **NON-COMPLIANT BOOTSTRAP** when the active revision runs a public or placeholder image that cannot be verified in the configured ACR, its pipeline metadata is missing or placeholder-only (for example, `commit-sha=initial`), and there is no compliant image or prior known-good revision available. Caller identity may be unavailable after Activity Log retention expires; do not infer compliance from the absence of a retained write event.
+
+For this state, do not attempt a rollback. Report the missing evidence and repair the CI/CD deployment path before deploying a newly built, label-compliant image. Scheduled scans remain detection-only; interactive remediation still requires explicit user approval and a verified rollback target.
+
 ### 3. Check resource tags (secondary confirmation)
 
 Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because the Automation Runbook stamps them on every deploy regardless of how the image got into ACR. Tags alone cannot distinguish a legitimate pipeline deploy from a portal-push-via-Event-Grid deploy.
