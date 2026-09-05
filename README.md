@@ -78,6 +78,10 @@ az ad sp create-for-rbac --name "compliancedemo-deploy" \
 #    Open the OAuth URL printed by post-deploy.sh in your browser
 ```
 
+### Refreshing Agent Configuration
+
+After changing the compliance skill, detection rules, approval hook, or scheduled-task template, rerun `bash scripts/post-deploy.sh` interactively. It uploads the current skill files and recreates `compliance-scan` with the detection-only prompt. Do not run this script from a scheduled scan because it changes agent configuration and task state.
+
 ### GitHub Secrets & Variables
 
 | Type | Name | Value |
