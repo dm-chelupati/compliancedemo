@@ -6,16 +6,18 @@ For each Container App deployment event (Microsoft.App/containerApps/write):
 
 ### 1. Classify the caller
 
-Extract `claims.appid` from Activity Logs (in KQL: `parse_json(Claims)["appid"]`).
+Extract `claims.appid` from Activity Logs with `parse_json(tostring(Claims))["appid"]`.
 
 - appid `c44b4083-3bb0-49c1-b47d-974e53cbdf3c` → Azure Portal → **NON-COMPLIANT**
-- appid `04b07795-a710-4e84-bea4-c697bab44963` → Azure CLI → **NON-COMPLIANT**
+- appid `04b07795-a710-4e84-bea4-c697bab44963` or `04b07795-8ddb-461a-bbee-02f9e1bf7b46` → Azure CLI → **NON-COMPLIANT**
 - appid `1950a258-227b-4e31-a9cf-717495945fc2` → Azure PowerShell → **NON-COMPLIANT**
 - appid `872cd9fa-d31f-45e0-9eab-6e460a02d1f1` → Visual Studio → **NON-COMPLIANT**
 - appid `0a7bdc5c-7b57-40be-9939-d4c5fc7cd417` → Azure Mobile App → **NON-COMPLIANT**
 - Caller contains `@` → User principal → **NON-COMPLIANT**
 - Known pipeline managed identity → **go to step 2**
 - Unknown service principal → **go to step 2**
+
+If no write event is returned, first verify that `AzureActivity` has rows for the target resource group. A direct Activity Log query only retains 90 rolling days; if the deployment is older, report the caller as unavailable rather than inferring compliance.
 
 ### 2. Verify Docker image labels (the tamper-proof check)
 
@@ -34,6 +36,10 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 
 This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
 
+### 2a. Classify bootstrap-only state
+
+Classify as **NON-COMPLIANT BOOTSTRAP** when the active revision runs the public bootstrap image, pipeline tags contain placeholder values such as `initial`, the configured ACR has no application repository, and no revision is both healthy and label-verified. Image-label validation is unavailable for a public bootstrap image; this is not evidence of a compliant deployment. Report that there is no rollback target and recommend repairing the approved deployment path before any redeploy.
+
 ### 3. Check resource tags (secondary confirmation)
 
 Look for `deployed-by=pipeline` and other pipeline tags on the Container App. These are the weakest signal because the Automation Runbook stamps them on every deploy regardless of how the image got into ACR. Tags alone cannot distinguish a legitimate pipeline deploy from a portal-push-via-Event-Grid deploy.
@@ -46,6 +52,7 @@ Look for `deployed-by=pipeline` and other pipeline tags on the Container App. Th
 |---|---|
 | c44b4083-3bb0-49c1-b47d-974e53cbdf3c | Azure Portal |
 | 04b07795-a710-4e84-bea4-c697bab44963 | Microsoft Azure CLI |
+| 04b07795-8ddb-461a-bbee-02f9e1bf7b46 | Microsoft Azure CLI |
 | 1950a258-227b-4e31-a9cf-717495945fc2 | Microsoft Azure PowerShell |
 | 872cd9fa-d31f-45e0-9eab-6e460a02d1f1 | Visual Studio |
 | 0a7bdc5c-7b57-40be-9939-d4c5fc7cd417 | Microsoft Azure Mobile App |
@@ -57,12 +64,12 @@ AzureActivity
 | where TimeGenerated > ago(##timeRange##)
 | where OperationNameValue has "Microsoft.App/containerApps/write"
 | where ActivityStatusValue == "Success"
-| where ResourceGroup =~ "rg-compliancedemo"
-| extend ClaimsObj = parse_json(Claims)
+| where ResourceGroup =~ "##resourceGroup##"
+| extend ClaimsObj = parse_json(tostring(Claims))
 | extend AppId = tostring(ClaimsObj["appid"])
 | extend CallerType = case(
     AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c", "AzurePortal",
-    AppId == "04b07795-a710-4e84-bea4-c697bab44963", "AzureCLI",
+    AppId in ("04b07795-a710-4e84-bea4-c697bab44963", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"), "AzureCLI",
     AppId == "1950a258-227b-4e31-a9cf-717495945fc2", "AzurePowerShell",
     Caller contains "@", "UserPrincipal",
     "ServicePrincipal"

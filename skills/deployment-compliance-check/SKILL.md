@@ -26,9 +26,15 @@ Data Sources
 Activity Logs in Log Analytics
 Activity Logs flow to the Log Analytics workspace via diagnostic settings. Use QueryLogAnalyticsByWorkspaceId to run KQL against the AzureActivity table.
 
-To discover the workspace ID if needed:
+Resolve the authoritative workspace from the subscription diagnostic setting, then retrieve its customer ID:
 
-az monitor log-analytics workspace show --resource-group rg-compliancedemo --workspace-name law-compliance-compliancedemo --query customerId -o tsv
+az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
+az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
+
+Run each Azure CLI read in a separate `RunAzCliReadCommands` call. The executor validates a single read command and rejects shell-chained commands.
+
+The subscription diagnostic setting is authoritative when the resource group contains multiple Log Analytics workspaces.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
@@ -61,13 +67,19 @@ This closes the "portal push via Event Grid" bypass.
 Step 4: Verify resource tags (secondary)
 Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.
 
-Step 5: Generate compliance report
-Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, and details of any violations.
+Step 5: Validate any rollback target
+A revision is a verified compliant rollback target only when its image passes the caller and immutable-label checks and the revision reports both `healthState=Healthy` and `provisioningState=Succeeded`. Do not treat `latestReadyRevision` alone as proof that a revision is healthy or compliant.
+
+Step 6: Generate compliance report
+Report should include scan timestamp, time range, total/compliant/non-compliant counts, image label check results, any verified compliant rollback target, and details of violations.
+
+Scheduled Scan Behavior
+Scheduled scans are detection-only. They must not modify a Container App, reactivate or deactivate revisions, or rerun a pipeline. Report the recommended interactive remediation instead.
 
 Revert Procedures
 IMPORTANT: Always get user approval before any revert action.
 
-Option A — Reactivate previous Container App revision: list revisions, activate the last known-good one, shift traffic, deactivate the non-compliant revision.
+Option A — Reactivate a verified compliant revision: list revisions, confirm image provenance and `healthState=Healthy` plus `provisioningState=Succeeded`, activate it, shift traffic, then deactivate the non-compliant revision.
 
 Option B — Re-run the CI/CD pipeline to redeploy the last known compliant image from the approved pipeline.
 
