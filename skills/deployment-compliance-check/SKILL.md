@@ -31,6 +31,8 @@ Resolve the authoritative workspace from the subscription diagnostic setting, th
 az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
 az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
 
+Run each Azure CLI read in a separate `RunAzCliReadCommands` call. The executor validates a single read command and rejects shell-chained commands.
+
 The subscription diagnostic setting is authoritative when the resource group contains multiple Log Analytics workspaces.
 
 Container App Resource Tags
