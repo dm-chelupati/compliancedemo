@@ -4,36 +4,39 @@ Detects and responds to non-compliant Azure Container App deployments using SRE 
 
 ## What it does
 
-- **Compliant**: Deployments via this CI/CD pipeline (GitHub Actions) — tagged with `deployed-by=pipeline`, `commit-sha`, `pipeline-run-id`
-- **Non-compliant**: Deployments via Azure Portal or ad-hoc CLI — detected by `claims.appid` in Activity Log
+- **Compliant**: A deployment made by the approved CI/CD identity whose image has all immutable pipeline labels, including `deployed-by=pipeline`, `commit-sha`, and `pipeline-run-id`.
+- **Non-compliant**: A deployment from Azure Portal, ad-hoc CLI, or PowerShell, or an image missing required immutable labels.
 
 When a Container App deployment is detected:
 1. **Alert fires** → Activity Log alert on `Microsoft.App/containerApps/write`
-2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill via KQL
-3. **Classifies** → Portal app ID `c44b4083...` = non-compliant; CI/CD service principal = compliant
-4. **For non-compliant** → Activates approval hook, recommends revert to previous revision
-5. **For compliant** → Confirms and closes the alert
+2. **SRE Agent investigates** → Runs the `deployment-compliance-check` skill against Activity Log, ACR, tags, and revision state
+3. **Classifies** → Caller identity is primary evidence; immutable image labels are required for a compliant result
+4. **For non-compliant** → Reports the violation and identifies a rollback only when a healthy, label-compliant target exists
+5. **For compliant** → Confirms the evidence and closes the alert when applicable
+
+Scheduled scans are detection-only. They never change revisions, traffic, workflows, or images. A separate interactive response may modify a deployment only after the approval hook permits it and the replacement target is verified.
 
 ## Architecture
 
 ```
 GitHub Actions (push to main)
     ↓
-Build Docker image → Push to ACR
+Build Docker image with immutable labels → Push to ACR
     ↓
-az containerapp update (with compliance tags)
+Verified deployment path: direct Container App update
+or provisioned Event Grid → Automation/managed identity
     ↓
 Activity Log: containerApps/write
     ↓                          ↓
-Alert Rule fires          Scheduled Task (every 30 min)
+Alert Rule fires          Scheduled Task (every 30 min, detection-only)
     ↓                          ↓
 SRE Agent Response Plan   SRE Agent Compliance Scan
     ↓
-deployment-compliance-check skill (KQL queries)
+deployment-compliance-check skill (activity, ACR, tags, revisions)
     ↓
-Compliant? ──yes──► Close alert
+Compliant? ──yes──► Confirm / close alert
     ↓ no
-Activate approval hook → Wait for user → Revert revision
+Report violation → verify healthy compliant target → approval hook → interactive rollback
 ```
 
 ## Deployed Resources

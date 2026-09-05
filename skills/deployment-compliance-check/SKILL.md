@@ -16,11 +16,11 @@ All Container App deployments MUST go through the approved CI/CD pipeline (GitHu
 
 Deployments via Azure Portal, interactive Azure CLI, or PowerShell are non-compliant.
 Only service principal / managed identity deployments from the CI/CD pipeline are compliant.
-Non-compliant deployments should be flagged, reported, and reverted (with user approval).
+Non-compliant deployments must be flagged and reported. A rollback is permitted only after a verified healthy, label-compliant target is available and the required approval hook allows the change.
 This policy ensures every production change is traceable to a code commit, reviewed via PR, and auditable through the pipeline.
 
 How the Pipeline Works
-GitHub Actions builds the Docker image with immutable compliance labels, pushes to ACR, which fires an Event Grid event. An Automation Runbook (running under a managed identity) picks up the event and updates the Container App via ARM. The key point: GitHub never authenticates to Azure AD directly — all Azure-side auth happens through managed identities inside Azure.
+GitHub Actions builds the Docker image with immutable compliance labels and pushes it to ACR. A compliant deployment also requires a verified path that updates the Container App, either directly from the workflow or through provisioned Event Grid and Automation resources running under a managed identity. An image push alone is not a deployment path.
 
 Data Sources
 Activity Logs in Log Analytics
