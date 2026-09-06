@@ -34,9 +34,11 @@ Even if the caller is the pipeline's managed identity, verify that the running i
 
 This catches the portal-push bypass: someone pushes an image to ACR manually → Event Grid fires → Automation deploys it → caller and tags look fine, but image labels are missing because GitHub Actions didn't build it.
 
-### 2a. Identify bootstrap-only deployments
+### 2a. Identify external and bootstrap-only deployments
 
-Classify the active revision as **NON-COMPLIANT BOOTSTRAP** when it runs a public or placeholder image that cannot be verified in the configured ACR, has placeholder pipeline metadata such as `commit-sha=initial`, and has no compliant ACR image or known-good prior revision.
+Any active revision that runs an image outside the configured ACR is **NON-COMPLIANT**, because its immutable labels cannot be verified through the approved registry. If a healthy label-compliant replacement exists, report it as an interactive remediation candidate.
+
+Classify that external-image violation as **NON-COMPLIANT BOOTSTRAP** only when it uses a public or placeholder image, has placeholder pipeline metadata such as `commit-sha=initial`, and has no compliant ACR image or known-good prior revision.
 
 The absence of a write event after retention expires does not establish compliance. In this state, scheduled scans are detection-only: report the missing evidence and repair the CI/CD path before deploying a label-compliant image. Do not attempt a rollback without an interactive request, explicit approval, and a verified rollback target.
 

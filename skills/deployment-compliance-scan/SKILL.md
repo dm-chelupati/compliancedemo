@@ -47,11 +47,11 @@ For every Container App in scope:
 ## Classification
 
 - `COMPLIANT`: `claims.appid` exactly matches the configured allowlist and all required image labels verify.
-- `NON-COMPLIANT`: user, Portal, CLI, PowerShell, or other prohibited caller; or an image missing required immutable labels.
-- `NON-COMPLIANT BOOTSTRAP`: active revision uses a public or placeholder image outside the configured ACR, has placeholder metadata such as `commit-sha=initial`, and no healthy prior revision or label-compliant ACR image exists.
-- `INVESTIGATE`: the caller is not in the configured allowlist, the allowlist is not configured, or evidence is incomplete without meeting the bootstrap criteria.
+- `NON-COMPLIANT`: user, Portal, CLI, PowerShell, or other prohibited caller; an image missing required immutable labels; or any running image outside the configured ACR.
+- `NON-COMPLIANT BOOTSTRAP`: the no-target subtype of non-compliance: the active revision uses a public or placeholder image outside the configured ACR, has placeholder metadata such as `commit-sha=initial`, and no healthy prior revision or label-compliant ACR image exists.
+- `INVESTIGATE`: the caller is not in the configured allowlist, the allowlist is not configured, or evidence is incomplete without meeting the non-compliance or bootstrap criteria.
 
-For a `NON-COMPLIANT BOOTSTRAP` result, explicitly state whether a healthy prior revision and a label-compliant ACR image exist. A public image cannot be label-verified through the configured ACR.
+For a `NON-COMPLIANT BOOTSTRAP` result, explicitly state whether a healthy prior revision and a label-compliant ACR image exist. A public image cannot be label-verified through the configured ACR. If an external image has a verified healthy replacement, report `NON-COMPLIANT` and name that interactive remediation candidate.
 
 ## Report format
 

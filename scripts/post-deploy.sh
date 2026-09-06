@@ -66,15 +66,11 @@ echo -e "${GREEN}  LAW Name: $LAW_NAME${NC}"
 echo -e "${GREEN}  LAW ID: $LAW_ID${NC}"
 echo -e "${GREEN}  LAW Workspace ID: $LAW_WORKSPACE_ID${NC}"
 
-APPROVED_PIPELINE_CALLER_IDS="${APPROVED_PIPELINE_CALLER_IDS:-}"
-if [[ -z "$APPROVED_PIPELINE_CALLER_IDS" ]]; then
-  APPROVED_PIPELINE_CALLER_IDS=$(azd env get-value CICD_SP_CLIENT_ID 2>/dev/null || echo "")
-fi
-if [[ -z "$APPROVED_PIPELINE_CALLER_IDS" ]]; then
-  APPROVED_PIPELINE_CALLER_IDS="NOT_CONFIGURED"
-  echo -e "${YELLOW}  No approved pipeline caller IDs configured; scheduled scans will fail closed as INVESTIGATE.${NC}"
+APPROVED_PIPELINE_CALLER_IDS="${APPROVED_PIPELINE_CALLER_IDS:-NOT_CONFIGURED}"
+if [[ "$APPROVED_PIPELINE_CALLER_IDS" == "NOT_CONFIGURED" ]]; then
+  echo -e "${YELLOW}  No verified Container App writer application IDs configured; scheduled scans will fail closed as INVESTIGATE.${NC}"
 else
-  echo -e "${GREEN}  Approved pipeline caller IDs: $APPROVED_PIPELINE_CALLER_IDS${NC}"
+  echo -e "${GREEN}  Approved Container App writer application IDs: $APPROVED_PIPELINE_CALLER_IDS${NC}"
 fi
 export APPROVED_PIPELINE_CALLER_IDS
 

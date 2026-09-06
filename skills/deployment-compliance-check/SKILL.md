@@ -69,7 +69,7 @@ az acr repository list --name <acr-name> --subscription <subscription-id> -o jso
 
 Do not treat `properties.latestReadyRevisionName` as proof that a revision is healthy. Always inspect that revision's `healthState` and `runningState` directly: the API can populate `latestReadyRevisionName` even when its revision is `Unhealthy` or `Failed`.
 
-If the running image is outside the configured ACR and the ACR has no label-compliant image, report `NON-COMPLIANT BOOTSTRAP` rather than treating unavailable image labels as compliant. Include whether a healthy prior revision exists.
+Any running image outside the configured ACR is `NON-COMPLIANT`. Use `NON-COMPLIANT BOOTSTRAP` only when that image is a public or placeholder bootstrap image with placeholder metadata and no label-compliant ACR image or healthy prior revision. Otherwise, report `NON-COMPLIANT` and name any verified healthy replacement as an interactive remediation candidate.
 
 Step 4: Verify resource tags (secondary)
 Compliant pipelines stamp tags like deployed-by=pipeline, pipeline-run-id, commit-sha, repository. Missing deployed-by tag is additional non-compliance evidence — but tags alone are weak because the Automation Runbook stamps them on every deploy, including ones triggered by manual ACR pushes.

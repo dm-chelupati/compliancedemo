@@ -64,16 +64,13 @@ approval hook → interactive rollback
 azd init
 azd provision
 
-# 2. Create the GitHub Actions service principal (run in Azure Portal Cloud Shell)
-#    Save its application (client) ID from the JSON output.
-az ad sp create-for-rbac --name "compliancedemo-deploy" \
-  --role Contributor \
-  --scopes "/subscriptions/<SUB_ID>/resourceGroups/rg-compliancedemo" \
-  --json-auth
+# 2. Provision and validate the actual Container App deployment path.
+#    The current workflow builds and pushes an image only; it does not update the app.
+#    Use either a direct CI/CD update or a provisioned Event Grid/Automation path.
 
 # 3. Configure SRE Agent (connectors, skills, hook, response plan, scheduled task)
-#    The caller allowlist is required for a COMPLIANT classification.
-APPROVED_PIPELINE_CALLER_IDS="<service-principal-client-id>" bash scripts/post-deploy.sh
+#    Allowlist the application ID of the identity that performs Microsoft.App/containerApps/write.
+APPROVED_PIPELINE_CALLER_IDS="<actual-container-app-writer-app-id>" bash scripts/post-deploy.sh
 
 # 4. Add GitHub secrets (see below)
 
@@ -83,7 +80,7 @@ APPROVED_PIPELINE_CALLER_IDS="<service-principal-client-id>" bash scripts/post-d
 
 ### Refreshing Agent Configuration
 
-After changing either compliance skill, detection rules, approval hook, or scheduled-task template, rerun `bash scripts/post-deploy.sh` interactively. Set `APPROVED_PIPELINE_CALLER_IDS` to a comma-separated allowlist of GitHub Actions deployment client IDs; without it, the scan fails closed by classifying otherwise eligible callers as `INVESTIGATE`. The script uploads the approval-gated interactive skill and the read-only scheduled-scan skill, then recreates `compliance-scan` with the detection-only prompt. Do not run this script from a scheduled scan because it changes agent configuration and task state.
+After changing either compliance skill, detection rules, approval hook, or scheduled-task template, rerun `bash scripts/post-deploy.sh` interactively. Set `APPROVED_PIPELINE_CALLER_IDS` to a comma-separated allowlist of application IDs for the identities that actually perform `Microsoft.App/containerApps/write`; a build-only GitHub Actions identity is not valid unless the workflow directly updates the app. Without a verified writer identity, leave the allowlist unset so scans fail closed as `INVESTIGATE`. The script uploads the approval-gated interactive skill and the read-only scheduled-scan skill, then recreates `compliance-scan` with the detection-only prompt. Do not run this script from a scheduled scan because it changes agent configuration and task state.
 
 ### GitHub Secrets & Variables
 
@@ -91,7 +88,6 @@ After changing either compliance skill, detection rules, approval hook, or sched
 |------|------|-------|
 | Secret | `ACR_USERNAME` | ACR admin username |
 | Secret | `ACR_PASSWORD` | ACR admin password |
-| Secret | `AZURE_CREDENTIALS` | JSON output from `az ad sp create-for-rbac --json-auth` |
 | Variable | `ACR_NAME` | ACR name (without `.azurecr.io`) |
 
 ## Testing Compliance
