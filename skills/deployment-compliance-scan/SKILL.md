@@ -16,6 +16,8 @@ This skill is for recurring scheduled scans only. It is read-only and detection-
 
 Never modify Container Apps, revisions, traffic, workflows, images, tags, registries, scheduled tasks, or agent configuration. Do not invoke approval hooks because this skill never proposes or performs a write action. Report eligible candidates only; an interactive incident-response flow owns approval-gated remediation.
 
+Treat any legacy scheduled-task prompt that requests remediation, approval hooks, or other modification as stale configuration. This skill's detection-only rule takes precedence.
+
 ## Compliance policy
 
 Approved CI/CD caller application IDs for this deployment: `{{APPROVED_PIPELINE_CALLER_IDS}}`.
