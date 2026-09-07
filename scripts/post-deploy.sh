@@ -652,7 +652,18 @@ import sys,json
 try:
     d=json.load(sys.stdin)
     props=d.get('properties', d)
-    valid = d.get('name')=='compliance-scan' and props.get('cronExpression')=='*/30 * * * *' and 'Load the deployment-compliance-scan skill' in props.get('agentPrompt','')
+    prompt=props.get('agentPrompt', '')
+    normalized=prompt.lower()
+    valid = (
+        d.get('name')=='compliance-scan'
+        and props.get('cronExpression')=='*/30 * * * *'
+        and 'Load the deployment-compliance-scan skill' in prompt
+        and 'read-only' in normalized
+        and 'detection-only' in normalized
+        and 'do not modify Container Apps' in prompt
+        and 'deployment-compliance-check' not in prompt
+        and 'remediate following' not in normalized
+    )
     print('ok' if valid else 'invalid')
 except: print('invalid')
 " 2>/dev/null)
@@ -660,7 +671,7 @@ if [ "$TASK_OK" = "ok" ]; then
   echo -e "    ${GREEN}✓ Scheduled task: compliance-scan (read-only skill)${NC}"
   VERIFY_PASS=$((VERIFY_PASS + 1))
 else
-  echo -e "    ${RED}✗ Scheduled task: compliance-scan missing or uses the wrong skill${NC}"
+  echo -e "    ${RED}✗ Scheduled task: compliance-scan missing, stale, or not read-only${NC}"
   VERIFY_FAIL=$((VERIFY_FAIL + 1))
 fi
 
