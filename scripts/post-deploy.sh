@@ -381,16 +381,36 @@ curl -s -o /dev/null -X DELETE \
 # ---- Create scheduled task for periodic compliance scans ----
 echo "   Updating compliance scan scheduled task..."
 TOKEN=$(get_agent_token)
+SCHEDULED_TASK_PROMPT='Load the deployment-compliance-scan skill and check whether the latest running image is compliant for all Container Apps in scope. This skill is read-only and scheduled scans are detection-only: do not modify Container Apps, revisions, traffic, workflows, images, or agent configuration. Report findings in the skill format, including whether a healthy label-compliant replacement and rollback target exist. If either is missing, report the blocked remediation and the CI/CD repair needed.'
+export SCHEDULED_TASK_PROMPT
+
+scheduled_task_is_current() {
+  curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/scheduledtasks/compliance-scan" \
+    -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
+import os,sys,json
+try:
+    d=json.load(sys.stdin)
+    props=d.get('properties', d)
+    valid = (
+        d.get('name')=='compliance-scan'
+        and props.get('description')=='compliance-scan'
+        and props.get('cronExpression')=='*/30 * * * *'
+        and props.get('agentPrompt') == os.environ['SCHEDULED_TASK_PROMPT']
+    )
+    print('ok' if valid else 'invalid')
+except: print('invalid')
+" 2>/dev/null
+}
 
 python3 -c "
-import json
+import json, os
 body = {
     'name': 'compliance-scan',
     'type': 'ScheduledTask',
     'properties': {
         'description': 'compliance-scan',
         'cronExpression': '*/30 * * * *',
-        'agentPrompt': '''Load the deployment-compliance-scan skill and check whether the latest running image is compliant for all Container Apps in scope. This skill is read-only and scheduled scans are detection-only: do not modify Container Apps, revisions, traffic, workflows, images, or agent configuration. Report findings in the skill format, including whether a healthy label-compliant replacement and rollback target exist. If either is missing, report the blocked remediation and the CI/CD repair needed.'''
+        'agentPrompt': os.environ['SCHEDULED_TASK_PROMPT']
     }
 }
 with open('/tmp/task-body.json', 'w') as f:
@@ -405,7 +425,21 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
 
 rm -f /tmp/task-body.json
 if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "204" ]; then
-  echo -e "${GREEN}  ✓ Scheduled task updated: compliance-scan (every 30 min)${NC}"
+  TASK_SYNCED=false
+  for attempt in 1 2 3 4 5; do
+    if [ "$(scheduled_task_is_current)" = "ok" ]; then
+      TASK_SYNCED=true
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "$TASK_SYNCED" = true ]; then
+    echo -e "${GREEN}  ✓ Scheduled task updated: compliance-scan (every 30 min)${NC}"
+  else
+    echo -e "${RED}ERROR: Scheduled task update was accepted but the required read-only configuration was not observed.${NC}"
+    exit 1
+  fi
 else
   echo -e "${RED}ERROR: Could not update compliance-scan (HTTP ${HTTP_CODE}). Existing task was left unchanged.${NC}"
   exit 1
@@ -646,27 +680,7 @@ else
 fi
 
 # Scheduled task
-TASK_OK=$(curl -s "${AGENT_ENDPOINT}/api/v2/extendedAgent/scheduledtasks/compliance-scan" \
-  -H "Authorization: Bearer ${TOKEN}" 2>/dev/null | python3 -c "
-import sys,json
-try:
-    d=json.load(sys.stdin)
-    props=d.get('properties', d)
-    prompt=props.get('agentPrompt', '')
-    normalized=prompt.lower()
-    valid = (
-        d.get('name')=='compliance-scan'
-        and props.get('cronExpression')=='*/30 * * * *'
-        and 'Load the deployment-compliance-scan skill' in prompt
-        and 'read-only' in normalized
-        and 'detection-only' in normalized
-        and 'do not modify Container Apps' in prompt
-        and 'deployment-compliance-check' not in prompt
-        and 'remediate following' not in normalized
-    )
-    print('ok' if valid else 'invalid')
-except: print('invalid')
-" 2>/dev/null)
+TASK_OK=$(scheduled_task_is_current)
 if [ "$TASK_OK" = "ok" ]; then
   echo -e "    ${GREEN}✓ Scheduled task: compliance-scan (read-only skill)${NC}"
   VERIFY_PASS=$((VERIFY_PASS + 1))
@@ -681,7 +695,8 @@ echo -e "  ${BLUE}────────────────────�
 if [ "$VERIFY_FAIL" -eq 0 ]; then
   echo -e "  ${GREEN}✓ All ${VERIFY_PASS}/${VERIFY_PASS} checks passed — agent is fully set up!${NC}"
 else
-  echo -e "  ${YELLOW}⚠ ${VERIFY_PASS} passed, ${VERIFY_FAIL} failed — check items above${NC}"
+  echo -e "  ${RED}✗ ${VERIFY_PASS} passed, ${VERIFY_FAIL} failed — setup is incomplete${NC}"
+  exit 1
 fi
 
 # ---- Summary ----

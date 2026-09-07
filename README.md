@@ -93,15 +93,20 @@ After changing either compliance skill, detection rules, approval hook, or sched
 ## Testing Compliance
 
 ```bash
-# Compliant deployment — push a code change via PR/merge
+# Compliant deployment — first provision a verified path that updates the
+# Container App under the application ID configured in APPROVED_PIPELINE_CALLER_IDS.
+# Create and merge a PR into main; the workflow only triggers on main pushes.
 echo "// test" >> src/api/server.js
-git add . && git commit -m "test deployment" && git push
+git add . && git commit -m "test deployment"
+git push origin HEAD
+# Create a pull request targeting main and merge it after review.
+
+# Verify the direct CI/CD or provisioned Event Grid/Automation deployment completed,
+# then ask the SRE Agent to inspect the Container App write and image labels.
+"Check deployment compliance for the last hour"
 
 # Non-compliant deployment — change via Portal
 # Go to Azure Portal → Container App → Edit and Deploy → Change something
-
-# Ask SRE Agent
-"Check deployment compliance for the last hour"
 ```
 
 ## Files
