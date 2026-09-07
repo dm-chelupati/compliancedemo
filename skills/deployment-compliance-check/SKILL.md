@@ -31,6 +31,8 @@ Resolve the Activity Log workspace from the subscription diagnostic setting, the
 az monitor diagnostic-settings subscription list --subscription <subscription-id> --query "value[?name=='activity-to-law'].workspaceId" -o tsv
 az monitor log-analytics workspace show --ids <workspace-resource-id> --query customerId -o tsv
 
+Before interpreting an empty resource-group or write-operation result, run a same-window `AzureActivity | summarize count(), max(TimeGenerated)` query without those filters. If the workspace is active but the scoped result is empty, report caller evidence as unavailable in the retained window rather than compliant. If the workspace also has no rows, state that ingestion cannot corroborate the result and use the direct Activity Log fallback.
+
 Container App Resource Tags
 Use RunAzCliReadCommands to check tags on the Container App.
 
