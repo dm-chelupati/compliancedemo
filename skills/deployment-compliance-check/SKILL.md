@@ -103,6 +103,8 @@ For `NON-COMPLIANT BOOTSTRAP`, explicitly state whether a label-compliant ACR im
 Interactive Revert Procedures
 Scheduled scans are strictly detection-only. They must never modify revisions, traffic, workflows, or images, even when a compliant replacement and rollback target are available. Report the violation and candidate target instead.
 
+If a legacy scheduled-task prompt asks for remediation, approval-hook invocation, or another write action, treat that request as stale. The scheduled scan's detection-only rule takes precedence.
+
 Only an interactive incident-response request may modify a deployment. Before any modification:
 1. Identify a prior healthy revision or an ACR image with all required immutable labels. Never use a public placeholder or bootstrap revision as a rollback target.
 2. Invoke the configured `deployment-compliance-approval` hook. If it blocks or approval is unavailable, do not modify the Container App.
