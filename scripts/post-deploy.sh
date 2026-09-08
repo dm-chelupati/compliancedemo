@@ -402,7 +402,21 @@ except: print('invalid')
 " 2>/dev/null
 }
 
-python3 -c "
+if [ "$(scheduled_task_is_current)" = "ok" ]; then
+  echo -e "${GREEN}  ✓ Scheduled task already uses the required read-only configuration.${NC}"
+else
+  # Do not leave an unverified legacy task active if the replacement cannot be created.
+  # A missing task returns 404, which is safe because the subsequent PUT creates it.
+  echo "   Removing stale or unverified compliance scan task before replacement..."
+  DELETE_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X DELETE "${AGENT_ENDPOINT}/api/v2/extendedAgent/scheduledtasks/compliance-scan" \
+    -H "Authorization: Bearer ${TOKEN}")
+  if [ "$DELETE_HTTP_CODE" != "200" ] && [ "$DELETE_HTTP_CODE" != "202" ] && [ "$DELETE_HTTP_CODE" != "204" ] && [ "$DELETE_HTTP_CODE" != "404" ]; then
+    echo -e "${RED}ERROR: Could not remove stale compliance-scan (HTTP ${DELETE_HTTP_CODE}); refusing to create a replacement beside an unverified task.${NC}"
+    exit 1
+  fi
+
+  python3 -c "
 import json, os
 body = {
     'name': 'compliance-scan',
@@ -417,32 +431,36 @@ with open('/tmp/task-body.json', 'w') as f:
     json.dump(body, f)
 "
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-  -X PUT "${AGENT_ENDPOINT}/api/v2/extendedAgent/scheduledtasks/compliance-scan" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data-binary @/tmp/task-body.json)
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X PUT "${AGENT_ENDPOINT}/api/v2/extendedAgent/scheduledtasks/compliance-scan" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data-binary @/tmp/task-body.json)
 
-rm -f /tmp/task-body.json
-if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "204" ]; then
-  TASK_SYNCED=false
-  for attempt in 1 2 3 4 5; do
-    if [ "$(scheduled_task_is_current)" = "ok" ]; then
-      TASK_SYNCED=true
-      break
+  rm -f /tmp/task-body.json
+  if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "204" ]; then
+    TASK_SYNCED=false
+    for attempt in 1 2 3 4 5; do
+      if [ "$(scheduled_task_is_current)" = "ok" ]; then
+        TASK_SYNCED=true
+        break
+      fi
+      sleep 2
+    done
+
+    if [ "$TASK_SYNCED" = true ]; then
+      echo -e "${GREEN}  ✓ Scheduled task updated: compliance-scan (every 30 min)${NC}"
+    else
+      echo -e "${RED}ERROR: Required read-only configuration was not observed; removing the unverified replacement.${NC}"
+      curl -s -o /dev/null -X DELETE \
+        "${AGENT_ENDPOINT}/api/v2/extendedAgent/scheduledtasks/compliance-scan" \
+        -H "Authorization: Bearer ${TOKEN}" || true
+      exit 1
     fi
-    sleep 2
-  done
-
-  if [ "$TASK_SYNCED" = true ]; then
-    echo -e "${GREEN}  ✓ Scheduled task updated: compliance-scan (every 30 min)${NC}"
   else
-    echo -e "${RED}ERROR: Scheduled task update was accepted but the required read-only configuration was not observed.${NC}"
+    echo -e "${RED}ERROR: Could not create read-only compliance-scan (HTTP ${HTTP_CODE}); no stale task was retained.${NC}"
     exit 1
   fi
-else
-  echo -e "${RED}ERROR: Could not update compliance-scan (HTTP ${HTTP_CODE}). Existing task was left unchanged.${NC}"
-  exit 1
 fi
 
 # ---- Step 8: GitHub connector + code repo ----
